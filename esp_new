@@ -1,0 +1,639 @@
+--[[
+    LightESP - Minimal & Efficient ESP Library for Roblox
+    Author: 
+    Version: 1.0.0
+    License: MIT
+    GitHub: 
+    
+    Usage:
+        local ESP = loadstring(game:HttpGet("raw-url"))()
+        ESP:Load({
+            Enabled = true,
+            Boxes = true,
+            BoxType = "Corner", -- "Full" or "Corner"
+            Tracer = false,
+            Names = true,
+            Distance = true,
+            HealthBar = true,
+            Weapon = true,
+            Skeleton = false,
+            CookingIndicator = false,
+            MaxDistance = 500,
+            TextSize = 11,
+            TextColor = Color3.fromRGB(255,255,255),
+            BoxColor = Color3.fromRGB(255,255,255),
+            TracerColor = Color3.fromRGB(255,255,255),
+            HealthBarGradient = true, -- true = gradient (green->red), false = solid based on health
+        })
+        ESP:SetEnabled(true)
+        -- later
+        ESP:Unload()
+]]
+
+local LightESP = {}
+local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local plr = Players.LocalPlayer
+
+-- Anti double load
+if getgenv().__LightESP_LOADED then return getgenv().__LightESP_LOADED end
+
+local ESP = {}
+local state = {
+    enabled = false,
+    config = nil,
+    players = {}, -- [player] = drawing objects table
+    connections = {}, -- [player] = event connections for tool changes
+    cache = {}, -- [player] = {hasCooking, weaponName}
+    renderConn = nil,
+    initialized = false,
+}
+
+-- Keyword detection for cooking items
+local COOKING_KEYWORDS = {"water", "sugar", "gelatin", "marshmallow", "empty bag", "marshmallow bag"}
+
+local function isCookingTool(name)
+    local n = name:lower()
+    for _, kw in ipairs(COOKING_KEYWORDS) do
+        if n:find(kw) then return true end
+    end
+    return false
+end
+
+-- Rebuild cache for a player (weapon name & cooking items)
+local function rebuildCache(p)
+    if not p or not p.Parent then return end
+    local hasCooking = false
+    local weaponName = nil
+    
+    pcall(function()
+        -- Check backpack
+        local bp = p.Backpack
+        if bp then
+            for _, v in ipairs(bp:GetChildren()) do
+                if v:IsA("Tool") then
+                    if isCookingTool(v.Name) then
+                        hasCooking = true
+                    end
+                end
+            end
+        end
+        -- Check character (equipped tools)
+        local ch = p.Character
+        if ch then
+            for _, v in ipairs(ch:GetChildren()) do
+                if v:IsA("Tool") then
+                    if isCookingTool(v.Name) then
+                        hasCooking = true
+                    else
+                        weaponName = v.Name
+                    end
+                end
+            end
+        end
+    end)
+    
+    state.cache[p] = {
+        hasCooking = hasCooking,
+        weaponName = weaponName
+    }
+end
+
+-- Create drawing objects for a player
+local function createESPObjects(p)
+    local objects = {
+        -- Box
+        box = Drawing.new("Square"),
+        -- Box corners (8 lines)
+        corners = {},
+        -- Tracer
+        tracer = Drawing.new("Line"),
+        -- Name text
+        nameText = Drawing.new("Text"),
+        -- Distance text
+        distText = Drawing.new("Text"),
+        -- HP bar background & fill
+        hpBg = Drawing.new("Square"),
+        hpFill = Drawing.new("Square"),
+        -- HP number text
+        hpText = Drawing.new("Text"),
+        -- Weapon text
+        weaponText = Drawing.new("Text"),
+        -- Cooking indicator text
+        cookingText = Drawing.new("Text"),
+        -- Skeleton lines (14 lines)
+        skeleton = {},
+    }
+    
+    -- Setup properties
+    objects.box.Thickness = 1.5
+    objects.box.Filled = false
+    objects.box.Visible = false
+    
+    objects.tracer.Thickness = 1.2
+    objects.tracer.Visible = false
+    
+    for _, text in ipairs({objects.nameText, objects.distText, objects.hpText, objects.weaponText, objects.cookingText}) do
+        text.Size = 11
+        text.Color = Color3.fromRGB(255,255,255)
+        text.Outline = true
+        text.OutlineColor = Color3.fromRGB(0,0,0)
+        text.Center = true
+        text.Font = Drawing.Fonts.Plex
+        text.Visible = false
+    end
+    
+    objects.hpBg.Thickness = 1
+    objects.hpBg.Filled = true
+    objects.hpBg.Color = Color3.fromRGB(20,20,20)
+    objects.hpBg.Visible = false
+    
+    objects.hpFill.Thickness = 0
+    objects.hpFill.Filled = true
+    objects.hpFill.Visible = false
+    
+    -- Corner lines (8)
+    for i = 1, 8 do
+        local line = Drawing.new("Line")
+        line.Thickness = 1.5
+        line.Color = Color3.fromRGB(255,255,255)
+        line.Visible = false
+        table.insert(objects.corners, line)
+    end
+    
+    -- Skeleton lines (14)
+    local skeletonBones = {
+        {"Head","UpperTorso"}, {"UpperTorso","LowerTorso"},
+        {"UpperTorso","RightUpperArm"}, {"RightUpperArm","RightLowerArm"}, {"RightLowerArm","RightHand"},
+        {"UpperTorso","LeftUpperArm"}, {"LeftUpperArm","LeftLowerArm"}, {"LeftLowerArm","LeftHand"},
+        {"LowerTorso","RightUpperLeg"}, {"RightUpperLeg","RightLowerLeg"}, {"RightLowerLeg","RightFoot"},
+        {"LowerTorso","LeftUpperLeg"}, {"LeftUpperLeg","LeftLowerLeg"}, {"LeftLowerLeg","LeftFoot"},
+        {"RightUpperLeg","LeftUpperLeg"},
+    }
+    for i = 1, #skeletonBones do
+        local line = Drawing.new("Line")
+        line.Thickness = 1
+        line.Color = Color3.fromRGB(255,255,255)
+        line.Visible = false
+        table.insert(objects.skeleton, line)
+    end
+    
+    return objects
+end
+
+-- Hide all ESP objects for a player
+local function hideESP(p)
+    local objs = state.players[p]
+    if not objs then return end
+    objs.box.Visible = false
+    objs.tracer.Visible = false
+    objs.nameText.Visible = false
+    objs.distText.Visible = false
+    objs.hpBg.Visible = false
+    objs.hpFill.Visible = false
+    objs.hpText.Visible = false
+    objs.weaponText.Visible = false
+    objs.cookingText.Visible = false
+    for _, line in ipairs(objs.corners) do
+        line.Visible = false
+    end
+    for _, line in ipairs(objs.skeleton) do
+        line.Visible = false
+    end
+end
+
+-- Remove all drawing objects for a player
+local function removeESP(p)
+    local objs = state.players[p]
+    if not objs then return end
+    pcall(function()
+        objs.box:Remove()
+        objs.tracer:Remove()
+        objs.nameText:Remove()
+        objs.distText:Remove()
+        objs.hpBg:Remove()
+        objs.hpFill:Remove()
+        objs.hpText:Remove()
+        objs.weaponText:Remove()
+        objs.cookingText:Remove()
+        for _, line in ipairs(objs.corners) do line:Remove() end
+        for _, line in ipairs(objs.skeleton) do line:Remove() end
+    end)
+    state.players[p] = nil
+end
+
+-- Connect event listeners for a player (tool changes)
+local function connectPlayerEvents(p)
+    if state.connections[p] then return end
+    local conns = {}
+    
+    -- Rebuild cache on changes
+    local function refresh()
+        rebuildCache(p)
+    end
+    
+    -- Backpack events
+    local bp = p.Backpack
+    if bp then
+        table.insert(conns, bp.ChildAdded:Connect(refresh))
+        table.insert(conns, bp.ChildRemoved:Connect(refresh))
+    end
+    
+    -- Character events
+    local function onCharacterAdded(ch)
+        task.wait(0.1)
+        refresh()
+        local charConns = {}
+        table.insert(charConns, ch.ChildAdded:Connect(function(v)
+            if v:IsA("Tool") then refresh() end
+        end))
+        table.insert(charConns, ch.ChildRemoved:Connect(function(v)
+            if v:IsA("Tool") then refresh() end
+        end))
+        table.insert(conns, charConns)
+    end
+    
+    if p.Character then onCharacterAdded(p.Character) end
+    table.insert(conns, p.CharacterAdded:Connect(onCharacterAdded))
+    
+    state.connections[p] = conns
+    refresh()
+end
+
+-- Disconnect events for a player
+local function disconnectPlayerEvents(p)
+    local conns = state.connections[p]
+    if conns then
+        for _, c in ipairs(conns) do
+            if type(c) == "table" then
+                for _, subc in ipairs(c) do pcall(function() subc:Disconnect() end) end
+            else
+                pcall(function() c:Disconnect() end)
+            end
+        end
+        state.connections[p] = nil
+    end
+    state.cache[p] = nil
+end
+
+-- Initialize all existing players
+local function initPlayers()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= plr then
+            state.players[p] = createESPObjects(p)
+            connectPlayerEvents(p)
+        end
+    end
+end
+
+-- Cleanup all players
+local function cleanupPlayers()
+    for p, _ in pairs(state.players) do
+        removeESP(p)
+        disconnectPlayerEvents(p)
+    end
+    state.players = {}
+    state.cache = {}
+end
+
+-- Update skeleton positions
+local function updateSkeleton(ch, objs, cam)
+    local skeletonBonesList = {
+        {"Head","UpperTorso"}, {"UpperTorso","LowerTorso"},
+        {"UpperTorso","RightUpperArm"}, {"RightUpperArm","RightLowerArm"}, {"RightLowerArm","RightHand"},
+        {"UpperTorso","LeftUpperArm"}, {"LeftUpperArm","LeftLowerArm"}, {"LeftLowerArm","LeftHand"},
+        {"LowerTorso","RightUpperLeg"}, {"RightUpperLeg","RightLowerLeg"}, {"RightLowerLeg","RightFoot"},
+        {"LowerTorso","LeftUpperLeg"}, {"LeftUpperLeg","LeftLowerLeg"}, {"LeftLowerLeg","LeftFoot"},
+        {"RightUpperLeg","LeftUpperLeg"},
+    }
+    
+    for i, bones in ipairs(skeletonBonesList) do
+        local p1 = ch:FindFirstChild(bones[1])
+        local p2 = ch:FindFirstChild(bones[2])
+        local line = objs.skeleton[i]
+        if p1 and p2 then
+            local v1, on1 = cam:WorldToViewportPoint(p1.Position)
+            local v2, on2 = cam:WorldToViewportPoint(p2.Position)
+            if on1 and on2 and v1.Z > 0 and v2.Z > 0 then
+                line.From = Vector2.new(v1.X, v1.Y)
+                line.To = Vector2.new(v2.X, v2.Y)
+                line.Visible = true
+            else
+                line.Visible = false
+            end
+        else
+            line.Visible = false
+        end
+    end
+end
+
+-- Main render loop
+local function startRender()
+    if state.renderConn then return end
+    state.renderConn = RunService.RenderStepped:Connect(function()
+        if not state.enabled or not state.config then return end
+        local cam = workspace.CurrentCamera
+        if not cam then return end
+        local vp = cam.ViewportSize
+        local localChar = plr.Character
+        local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
+        
+        for p, objs in pairs(state.players) do
+            local ch = p.Character
+            local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+            local root = ch and ch:FindFirstChild("HumanoidRootPart")
+            
+            if not ch or not hum or not root or hum.Health <= 0 then
+                hideESP(p)
+                continue
+            end
+            
+            -- Distance check
+            if localRoot and (root.Position - localRoot.Position).Magnitude > state.config.MaxDistance then
+                hideESP(p)
+                continue
+            end
+            
+            local pos3, onScreen = cam:WorldToViewportPoint(root.Position)
+            if not onScreen or pos3.Z <= 0 then
+                hideESP(p)
+                continue
+            end
+            
+            local boxColor = state.config.BoxColor or Color3.fromRGB(255,255,255)
+            local textColor = state.config.TextColor or Color3.fromRGB(255,255,255)
+            
+            -- Calculate box dimensions (height based on character size)
+            local topPos = cam:WorldToViewportPoint(root.Position + Vector3.new(0, 3.2, 0))
+            local botPos = cam:WorldToViewportPoint(root.Position - Vector3.new(0, 3.5, 0))
+            local boxHeight = math.abs(botPos.Y - topPos.Y)
+            local boxWidth = boxHeight * 0.6
+            local boxX = pos3.X - boxWidth / 2
+            local boxY = math.min(topPos.Y, botPos.Y)
+            
+            -- Box ESP
+            if state.config.Boxes then
+                if state.config.BoxType == "Full" then
+                    objs.box.Size = Vector2.new(boxWidth, boxHeight)
+                    objs.box.Position = Vector2.new(boxX, boxY)
+                    objs.box.Color = boxColor
+                    objs.box.Visible = true
+                    -- Hide corners
+                    for _, line in ipairs(objs.corners) do line.Visible = false end
+                else -- Corner
+                    objs.box.Visible = false
+                    local cornerLen = math.min(boxWidth, boxHeight) * 0.25
+                    local corners = objs.corners
+                    -- Top-left
+                    corners[1].From = Vector2.new(boxX, boxY)
+                    corners[1].To = Vector2.new(boxX + cornerLen, boxY)
+                    corners[2].From = Vector2.new(boxX, boxY)
+                    corners[2].To = Vector2.new(boxX, boxY + cornerLen)
+                    -- Top-right
+                    corners[3].From = Vector2.new(boxX + boxWidth, boxY)
+                    corners[3].To = Vector2.new(boxX + boxWidth - cornerLen, boxY)
+                    corners[4].From = Vector2.new(boxX + boxWidth, boxY)
+                    corners[4].To = Vector2.new(boxX + boxWidth, boxY + cornerLen)
+                    -- Bottom-left
+                    corners[5].From = Vector2.new(boxX, boxY + boxHeight)
+                    corners[5].To = Vector2.new(boxX + cornerLen, boxY + boxHeight)
+                    corners[6].From = Vector2.new(boxX, boxY + boxHeight)
+                    corners[6].To = Vector2.new(boxX, boxY + boxHeight - cornerLen)
+                    -- Bottom-right
+                    corners[7].From = Vector2.new(boxX + boxWidth, boxY + boxHeight)
+                    corners[7].To = Vector2.new(boxX + boxWidth - cornerLen, boxY + boxHeight)
+                    corners[8].From = Vector2.new(boxX + boxWidth, boxY + boxHeight)
+                    corners[8].To = Vector2.new(boxX + boxWidth, boxY + boxHeight - cornerLen)
+                    for _, line in ipairs(corners) do
+                        line.Color = boxColor
+                        line.Visible = true
+                    end
+                end
+            else
+                objs.box.Visible = false
+                for _, line in ipairs(objs.corners) do line.Visible = false end
+            end
+            
+            -- Tracer (from bottom center of screen to player's feet)
+            if state.config.Tracer then
+                local tracerColor = state.config.TracerColor or boxColor
+                objs.tracer.From = Vector2.new(vp.X / 2, vp.Y)
+                objs.tracer.To = Vector2.new(pos3.X, boxY + boxHeight)
+                objs.tracer.Color = tracerColor
+                objs.tracer.Visible = true
+            else
+                objs.tracer.Visible = false
+            end
+            
+            -- Name
+            if state.config.Names then
+                objs.nameText.Text = p.DisplayName or p.Name
+                objs.nameText.Size = state.config.TextSize
+                objs.nameText.Color = textColor
+                objs.nameText.Position = Vector2.new(pos3.X, boxY - 14)
+                objs.nameText.Visible = true
+            else
+                objs.nameText.Visible = false
+            end
+            
+            -- Distance
+            if state.config.Distance and localRoot then
+                local dist = math.floor((root.Position - localRoot.Position).Magnitude)
+                objs.distText.Text = dist .. "m"
+                objs.distText.Size = state.config.TextSize
+                objs.distText.Color = textColor
+                objs.distText.Position = Vector2.new(pos3.X, boxY + boxHeight + 3)
+                objs.distText.Visible = true
+            else
+                objs.distText.Visible = false
+            end
+            
+            -- Health Bar
+            if state.config.HealthBar then
+                local hpPercent = hum.Health / hum.MaxHealth
+                local barX = boxX - 6
+                local barWidth = 3
+                local barHeight = boxHeight
+                
+                objs.hpBg.Size = Vector2.new(barWidth, barHeight)
+                objs.hpBg.Position = Vector2.new(barX, boxY)
+                objs.hpBg.Visible = true
+                
+                local fillHeight = barHeight * hpPercent
+                objs.hpFill.Size = Vector2.new(barWidth, fillHeight)
+                objs.hpFill.Position = Vector2.new(barX, boxY + barHeight - fillHeight)
+                if state.config.HealthBarGradient then
+                    local r = math.floor((1 - hpPercent) * 255)
+                    local g = math.floor(hpPercent * 255)
+                    objs.hpFill.Color = Color3.fromRGB(r, g, 0)
+                else
+                    local r = math.floor((1 - hpPercent) * 255)
+                    local g = math.floor(hpPercent * 255)
+                    objs.hpFill.Color = Color3.fromRGB(r, g, 0)
+                end
+                objs.hpFill.Visible = true
+                
+                -- Health number
+                objs.hpText.Text = math.floor(hum.Health) .. " HP"
+                objs.hpText.Size = 9
+                objs.hpText.Color = Color3.fromRGB(255,255,255)
+                objs.hpText.Position = Vector2.new(barX + barWidth/2, boxY - 10)
+                objs.hpText.Visible = true
+            else
+                objs.hpBg.Visible = false
+                objs.hpFill.Visible = false
+                objs.hpText.Visible = false
+            end
+            
+            -- Weapon
+            if state.config.Weapon then
+                local cache = state.cache[p]
+                if cache and cache.weaponName then
+                    objs.weaponText.Text = cache.weaponName
+                    objs.weaponText.Size = state.config.TextSize
+                    objs.weaponText.Color = Color3.fromRGB(255, 200, 80)
+                    objs.weaponText.Position = Vector2.new(pos3.X, boxY + boxHeight + 13)
+                    objs.weaponText.Visible = true
+                else
+                    objs.weaponText.Visible = false
+                end
+            else
+                objs.weaponText.Visible = false
+            end
+            
+            -- Cooking Indicator
+            if state.config.CookingIndicator then
+                local cache = state.cache[p]
+                if cache and cache.hasCooking then
+                    objs.cookingText.Text = "🍳 MASAK"
+                    objs.cookingText.Size = state.config.TextSize
+                    objs.cookingText.Color = Color3.fromRGB(0, 255, 100)
+                    objs.cookingText.Position = Vector2.new(boxX + boxWidth + 5, boxY + boxHeight/2 - 8)
+                    objs.cookingText.Center = false
+                    objs.cookingText.Visible = true
+                else
+                    objs.cookingText.Visible = false
+                end
+            else
+                objs.cookingText.Visible = false
+            end
+            
+            -- Skeleton
+            if state.config.Skeleton then
+                updateSkeleton(ch, objs, cam)
+            else
+                for _, line in ipairs(objs.skeleton) do line.Visible = false end
+            end
+        end
+    end)
+end
+
+local function stopRender()
+    if state.renderConn then
+        state.renderConn:Disconnect()
+        state.renderConn = nil
+    end
+end
+
+-- Public API
+function ESP:Load(config)
+    if state.initialized then
+        self:Unload()
+    end
+    
+    local defaultConfig = {
+        Enabled = true,
+        Boxes = true,
+        BoxType = "Corner", -- "Full" or "Corner"
+        Tracer = false,
+        Names = true,
+        Distance = true,
+        HealthBar = true,
+        HealthBarGradient = true,
+        Weapon = true,
+        Skeleton = false,
+        CookingIndicator = false,
+        MaxDistance = 500,
+        TextSize = 11,
+        TextColor = Color3.fromRGB(255,255,255),
+        BoxColor = Color3.fromRGB(255,255,255),
+        TracerColor = Color3.fromRGB(255,255,255),
+    }
+    
+    state.config = defaultConfig
+    if config then
+        for k, v in pairs(config) do
+            state.config[k] = v
+        end
+    end
+    
+    initPlayers()
+    startRender()
+    state.initialized = true
+    state.enabled = state.config.Enabled
+    
+    -- Hook player add/remove
+    if not ESP._playerAddedConn then
+        ESP._playerAddedConn = Players.PlayerAdded:Connect(function(p)
+            if p ~= plr then
+                state.players[p] = createESPObjects(p)
+                connectPlayerEvents(p)
+            end
+        end)
+        ESP._playerRemovingConn = Players.PlayerRemoving:Connect(function(p)
+            removeESP(p)
+            disconnectPlayerEvents(p)
+        end)
+    end
+    
+    return self
+end
+
+function ESP:Unload()
+    state.enabled = false
+    stopRender()
+    cleanupPlayers()
+    state.initialized = false
+    state.config = nil
+    if ESP._playerAddedConn then
+        ESP._playerAddedConn:Disconnect()
+        ESP._playerRemovingConn:Disconnect()
+        ESP._playerAddedConn = nil
+        ESP._playerRemovingConn = nil
+    end
+end
+
+function ESP:SetEnabled(enabled)
+    state.enabled = enabled
+    if not enabled then
+        for p, _ in pairs(state.players) do
+            hideESP(p)
+        end
+    end
+end
+
+function ESP:GetConfig()
+    return state.config
+end
+
+function ESP:UpdateConfig(newConfig)
+    if not state.config then return end
+    for k, v in pairs(newConfig) do
+        state.config[k] = v
+    end
+end
+
+function ESP:Reload()
+    if not state.initialized then return end
+    for p, _ in pairs(state.players) do
+        removeESP(p)
+        disconnectPlayerEvents(p)
+    end
+    state.players = {}
+    state.cache = {}
+    initPlayers()
+end
+
+getgenv().__LightESP_LOADED = ESP
+return ESP
