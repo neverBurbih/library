@@ -1,9 +1,10 @@
 --[[
-    LightESP
-    - API identik dengan SensoryESP (Load, Unload, GetConfig, UpdateConfig)
-    - Implementasi ringan menggunakan Drawing API & RenderStepped
-    - Fitur: Box (Full/Corner), Tracer, Name, Distance, HP Bar (gradient), Weapon, Skeleton, Cooking Indicator
-    - Tidak pakai Chams / BoxFill / Gradient animasi (biar enteng)
+    LightESP - Stabil + Ringan + Chams
+    - Weapon text putih
+    - HP Bar gradient Hijau -> Kuning -> Merah
+    - Skeleton smooth (no jitter)
+    - Chams (Highlight) ringan
+    - API kompatibel dengan SensoryESP
 ]]
 
 local LightESP = {}
@@ -15,22 +16,22 @@ local Camera = workspace.CurrentCamera
 
 if getgenv().__LightESP_LOADED then return getgenv().__LightESP_LOADED end
 
--- Konfigurasi default (mirip SensoryESP)
+-- Konfigurasi default
 local Config = {
     Enabled = true,
     Keybind = { Enabled = true, Key = Enum.KeyCode.Insert },
     Players = true,
     LocalPlayer = false,
-    LimitFPS = 0,  -- 0 = no limit
-    DynamicBoxes = true,
+    LimitFPS = 0,
+    DynamicBoxes = false,
     Boxes = true,
-    BoxType = "Corner",  -- "Normal" atau "Corner"
+    BoxType = "Corner",
     BoxColor = Color3.fromRGB(255,255,255),
     BoxThickness = 1,
     Outlines = { Enabled = true, Color = Color3.fromRGB(0,0,0), Thickness = 1 },
     HealthBar = {
         Enabled = true,
-        Position = "Left",  -- "Left", "Right"
+        Position = "Left",
         Width = 2,
         ShowText = true,
         HideWhenFullHP = true,
@@ -41,22 +42,58 @@ local Config = {
     TextColor = Color3.fromRGB(255,255,255),
     TextOutline = true,
     Distance = { Enabled = true, Unit = "Meters", StudsPerMeter = 3, Ending = "m", Gap = 2 },
-    Weapon = { Enabled = true, Gap = 1, UseToolFallback = true },
-    Skeleton = { Enabled = false, Color = Color3.fromRGB(255,255,255), Outline = true, OutlineColor = Color3.fromRGB(0,0,0), Thickness = 1 },
-    CookingIndicator = false,  -- tambahan custom
+    Weapon = { 
+        Enabled = true, 
+        Gap = 1, 
+        UseToolFallback = true,
+        Color = Color3.fromRGB(255,255,255)  -- PUTIH!
+    },
+    Skeleton = { Enabled = false, Color = Color3.fromRGB(255,255,255), Outline = true, OutlineColor = Color3.fromRGB(0,0,0), Thickness = 1, Smoothing = 0.3 },
+    CookingIndicator = false,
+    Chams = {
+        Enabled = false,
+        Type = "Highlight",  -- "Highlight" atau "Adornment"
+        Highlight = {
+            FillColor = Color3.fromRGB(59, 144, 204),
+            FillTransparency = 0.6,
+            OutlineColor = Color3.fromRGB(255, 255, 255),
+            OutlineTransparency = 0,
+            VisibleCheck = false,
+        },
+        Adornment = {
+            Color = Color3.fromRGB(59, 144, 204),
+            Transparency = 0.5,
+            AlwaysOnTop = true,
+        }
+    },
     MaxDistance = 500,
-    Directories = {}  -- tidak diimplementasikan (biar ringan)
+    Directories = {}
 }
 
--- State
-local espObjs = {}      -- [player] = drawing objects
-local cache = {}        -- [player] = { hasCooking, weaponName }
-local connections = {}  -- [player] = { conns }
+local espObjs = {}
+local cache = {}
+local connections = {}
 local renderConn = nil
 local lastRender = 0
 local lastScan = 0
+local ChamsContainer = nil
 
--- Helper: keyword masak
+-- Helper untuk health color gradient (Hijau -> Kuning -> Merah)
+local function GetHealthColor(percent)
+    if percent >= 0.5 then
+        local t = (percent - 0.5) * 2
+        local r = math.floor(255 * (1 - t))
+        local g = 255
+        return Color3.fromRGB(r, g, 0)
+    else
+        local t = percent * 2
+        local r = 255
+        local g = math.floor(255 * t)
+        return Color3.fromRGB(r, g, 0)
+    end
+end
+
+-- Helper cooking keywords
 local COOKING_KW = {"water","sugar","gelatin","marshmallow","empty bag"}
 local function isCooking(name)
     local n = name:lower()
@@ -86,6 +123,33 @@ local function rebuildCache(p)
     cache[p] = { hasCooking = hasCooking, weaponName = weaponName }
 end
 
+-- Setup chams highlight
+local function setupChams(character, player)
+    if not Config.Chams.Enabled then return end
+    if not ChamsContainer then
+        ChamsContainer = Instance.new("Folder")
+        ChamsContainer.Name = "LightESP_Chams"
+        ChamsContainer.Parent = gethui and gethui() or game:GetService("CoreGui")
+    end
+    
+    -- Hapus highlight lama jika ada
+    local oldHighlight = espObjs[player] and espObjs[player].Highlight
+    if oldHighlight then oldHighlight:Destroy() end
+    
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "ESP_Highlight"
+    highlight.Parent = ChamsContainer
+    highlight.Adornee = character
+    highlight.FillColor = Config.Chams.Highlight.FillColor
+    highlight.FillTransparency = Config.Chams.Highlight.FillTransparency
+    highlight.OutlineColor = Config.Chams.Highlight.OutlineColor
+    highlight.OutlineTransparency = Config.Chams.Highlight.OutlineTransparency
+    highlight.DepthMode = Config.Chams.Highlight.VisibleCheck and Enum.HighlightDepthMode.Occluded or Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Enabled = true
+    
+    return highlight
+end
+
 local function connectPlayer(p)
     if p == plr or connections[p] then return end
     local conns = {}
@@ -100,6 +164,11 @@ local function connectPlayer(p)
         table.insert(conns, ch.ChildAdded:Connect(function(v) if v:IsA("Tool") then rebuildCache(p) end end))
         table.insert(conns, ch.ChildRemoved:Connect(function(v) if v:IsA("Tool") then rebuildCache(p) end end))
         rebuildCache(p)
+        
+        -- Setup chams saat karakter muncul
+        if espObjs[p] and Config.Chams.Enabled then
+            espObjs[p].Highlight = setupChams(ch, p)
+        end
     end
     if p.Character then watchChar(p.Character) end
     table.insert(conns, p.CharacterAdded:Connect(watchChar))
@@ -114,7 +183,23 @@ local function disconnectPlayer(p)
     cache[p] = nil
 end
 
--- Drawing objects per player
+-- Stabil box calculation
+local function getStableBox(character, hum, rootPart)
+    if not character or not hum or not rootPart then return nil, nil end
+    local isR6 = hum.RigType == Enum.HumanoidRigType.R6
+    local topOffset = isR6 and 2.8 or 3.0
+    local bottomOffset = isR6 and 3.0 or 3.5
+    local topPos = rootPart.Position + Vector3.new(0, topOffset, 0)
+    local bottomPos = rootPart.Position - Vector3.new(0, bottomOffset, 0)
+    local top2D = Camera:WorldToViewportPoint(topPos)
+    local bottom2D = Camera:WorldToViewportPoint(bottomPos)
+    local height = math.abs(top2D.Y - bottom2D.Y)
+    local centerX = (top2D.X + bottom2D.X) / 2
+    local centerY = (top2D.Y + bottom2D.Y) / 2
+    return Vector2.new(centerX, centerY), Vector2.new(height * 0.65, height)
+end
+
+-- Drawing objects
 local function createESPObj(p)
     local obj = {
         box = Drawing.new("Square"),
@@ -128,6 +213,10 @@ local function createESPObj(p)
         weaponText = Drawing.new("Text"),
         cookingText = Drawing.new("Text"),
         skeleton = {},
+        skeletonLastPos = {},
+        lastPos = nil,
+        lastSize = nil,
+        Highlight = nil,
     }
     obj.box.Thickness = Config.BoxThickness
     obj.box.Filled = false
@@ -143,6 +232,9 @@ local function createESPObj(p)
         t.Font = Drawing.Fonts.Plex
         t.Visible = false
     end
+    -- Weapon text khusus warna putih
+    obj.weaponText.Color = Config.Weapon.Color or Color3.fromRGB(255,255,255)
+    
     obj.hpBg.Thickness = 1
     obj.hpBg.Filled = true
     obj.hpBg.Color = Color3.fromRGB(20,20,20)
@@ -152,7 +244,6 @@ local function createESPObj(p)
     obj.hpFill.Visible = false
     obj.hpNum.Size = 9
     obj.hpNum.Visible = false
-    -- corners (8 lines)
     for i = 1, 8 do
         local line = Drawing.new("Line")
         line.Thickness = Config.BoxThickness
@@ -160,13 +251,13 @@ local function createESPObj(p)
         line.Visible = false
         table.insert(obj.corners, line)
     end
-    -- skeleton (14 lines)
     for i = 1, 14 do
         local line = Drawing.new("Line")
         line.Thickness = Config.Skeleton.Thickness
         line.Color = Config.Skeleton.Color
         line.Visible = false
         table.insert(obj.skeleton, line)
+        obj.skeletonLastPos[i] = nil
     end
     return obj
 end
@@ -189,6 +280,7 @@ end
 local function removeESP(p)
     local obj = espObjs[p]
     if obj then
+        if obj.Highlight then obj.Highlight:Destroy() end
         pcall(function()
             obj.box:Remove()
             obj.tracer:Remove()
@@ -207,7 +299,6 @@ local function removeESP(p)
     disconnectPlayer(p)
 end
 
--- Skeleton update
 local SKEL_BONES = {
     {"Head","UpperTorso"}, {"UpperTorso","LowerTorso"},
     {"UpperTorso","RightUpperArm"}, {"RightUpperArm","RightLowerArm"}, {"RightLowerArm","RightHand"},
@@ -216,7 +307,9 @@ local SKEL_BONES = {
     {"LowerTorso","LeftUpperLeg"}, {"LeftUpperLeg","LeftLowerLeg"}, {"LeftLowerLeg","LeftFoot"},
     {"RightUpperLeg","LeftUpperLeg"},
 }
+
 local function updateSkeleton(ch, obj, cam)
+    local smoothFactor = Config.Skeleton.Smoothing or 0.3
     for i, bones in ipairs(SKEL_BONES) do
         local p1 = ch:FindFirstChild(bones[1])
         local p2 = ch:FindFirstChild(bones[2])
@@ -225,22 +318,56 @@ local function updateSkeleton(ch, obj, cam)
             local v1, o1 = cam:WorldToViewportPoint(p1.Position)
             local v2, o2 = cam:WorldToViewportPoint(p2.Position)
             if o1 and o2 and v1.Z > 0 and v2.Z > 0 then
-                line.From = Vector2.new(v1.X, v1.Y)
-                line.To = Vector2.new(v2.X, v2.Y)
+                local newFrom = Vector2.new(v1.X, v1.Y)
+                local newTo = Vector2.new(v2.X, v2.Y)
+                if obj.skeletonLastPos[i] then
+                    local lastFrom, lastTo = obj.skeletonLastPos[i].from, obj.skeletonLastPos[i].to
+                    newFrom = newFrom:Lerp(lastFrom, smoothFactor)
+                    newTo = newTo:Lerp(lastTo, smoothFactor)
+                end
+                line.From = newFrom
+                line.To = newTo
                 line.Visible = true
+                obj.skeletonLastPos[i] = { from = newFrom, to = newTo }
             else
                 line.Visible = false
+                obj.skeletonLastPos[i] = nil
             end
         else
             line.Visible = false
+            obj.skeletonLastPos[i] = nil
         end
+    end
+end
+
+-- Update chams
+local function updateChams(obj, character, player)
+    if not Config.Chams.Enabled then
+        if obj.Highlight then obj.Highlight:Destroy(); obj.Highlight = nil end
+        return
+    end
+    if not obj.Highlight then
+        obj.Highlight = setupChams(character, player)
+    elseif obj.Highlight and obj.Highlight.Adornee ~= character then
+        obj.Highlight.Adornee = character
+    end
+    if obj.Highlight then
+        obj.Highlight.FillColor = Config.Chams.Highlight.FillColor
+        obj.Highlight.FillTransparency = Config.Chams.Highlight.FillTransparency
+        obj.Highlight.OutlineColor = Config.Chams.Highlight.OutlineColor
+        obj.Highlight.OutlineTransparency = Config.Chams.Highlight.OutlineTransparency
+        obj.Highlight.DepthMode = Config.Chams.Highlight.VisibleCheck and Enum.HighlightDepthMode.Occluded or Enum.HighlightDepthMode.AlwaysOnTop
+        obj.Highlight.Enabled = true
     end
 end
 
 -- Main render
 local function renderStep()
     if not Config.Enabled then
-        for p, obj in pairs(espObjs) do hideESP(obj) end
+        for p, obj in pairs(espObjs) do 
+            hideESP(obj)
+            if obj.Highlight then obj.Highlight.Enabled = false end
+        end
         return
     end
 
@@ -248,7 +375,6 @@ local function renderStep()
     if Config.LimitFPS > 0 and (now - lastRender) < (1/Config.LimitFPS) then return end
     lastRender = now
 
-    -- Periodic scan for new players (every 1 sec)
     if now - lastScan > 1 then
         lastScan = now
         for _, p in pairs(Players:GetPlayers()) do
@@ -271,29 +397,38 @@ local function renderStep()
 
         if not ch or not hum or not root or hum.Health <= 0 then
             hideESP(obj)
+            if obj.Highlight then obj.Highlight.Enabled = false end
             continue
         end
 
         if localRoot and (root.Position - localRoot.Position).Magnitude > Config.MaxDistance then
             hideESP(obj)
+            if obj.Highlight then obj.Highlight.Enabled = false end
             continue
         end
 
-        local pos3, onScreen = cam:WorldToViewportPoint(root.Position)
-        if not onScreen or pos3.Z <= 0 then
+        -- Update chams
+        updateChams(obj, ch, p)
+
+        local pos2d, size2d = getStableBox(ch, hum, root)
+        if not pos2d or not size2d then
             hideESP(obj)
             continue
         end
 
-        -- Box dimensions
-        local topPos = cam:WorldToViewportPoint(root.Position + Vector3.new(0, 3.2, 0))
-        local botPos = cam:WorldToViewportPoint(root.Position - Vector3.new(0, 3.5, 0))
-        local boxH = math.abs(botPos.Y - topPos.Y)
-        local boxW = boxH * 0.6
-        local boxX = pos3.X - boxW/2
-        local boxY = math.min(topPos.Y, botPos.Y)
+        if obj.lastPos and obj.lastSize then
+            pos2d = pos2d:Lerp(obj.lastPos, 0.3)
+            size2d = size2d:Lerp(obj.lastSize, 0.3)
+        end
+        obj.lastPos = pos2d
+        obj.lastSize = size2d
 
-        -- Box (Full atau Corner)
+        local boxX = pos2d.X - size2d.X/2
+        local boxY = pos2d.Y - size2d.Y/2
+        local boxW = size2d.X
+        local boxH = size2d.Y
+
+        -- Box
         if Config.Boxes then
             if Config.BoxType == "Normal" then
                 obj.box.Size = Vector2.new(boxW, boxH)
@@ -301,26 +436,22 @@ local function renderStep()
                 obj.box.Color = Config.BoxColor
                 obj.box.Visible = true
                 for _, l in ipairs(obj.corners) do l.Visible = false end
-            else -- Corner
+            else
                 obj.box.Visible = false
                 local len = math.min(boxW, boxH) * 0.25
                 local corners = obj.corners
-                -- top-left
                 corners[1].From = Vector2.new(boxX, boxY)
                 corners[1].To = Vector2.new(boxX+len, boxY)
                 corners[2].From = Vector2.new(boxX, boxY)
                 corners[2].To = Vector2.new(boxX, boxY+len)
-                -- top-right
                 corners[3].From = Vector2.new(boxX+boxW, boxY)
                 corners[3].To = Vector2.new(boxX+boxW-len, boxY)
                 corners[4].From = Vector2.new(boxX+boxW, boxY)
                 corners[4].To = Vector2.new(boxX+boxW, boxY+len)
-                -- bottom-left
                 corners[5].From = Vector2.new(boxX, boxY+boxH)
                 corners[5].To = Vector2.new(boxX+len, boxY+boxH)
                 corners[6].From = Vector2.new(boxX, boxY+boxH)
                 corners[6].To = Vector2.new(boxX, boxY+boxH-len)
-                -- bottom-right
                 corners[7].From = Vector2.new(boxX+boxW, boxY+boxH)
                 corners[7].To = Vector2.new(boxX+boxW-len, boxY+boxH)
                 corners[8].From = Vector2.new(boxX+boxW, boxY+boxH)
@@ -338,8 +469,7 @@ local function renderStep()
         -- Tracer
         if Config.Tracer then
             obj.tracer.From = Vector2.new(vp.X/2, vp.Y)
-            obj.tracer.To = Vector2.new(pos3.X, boxY+boxH)
-            obj.tracer.Color = Config.BoxColor
+            obj.tracer.To = Vector2.new(pos2d.X, boxY+boxH)
             obj.tracer.Visible = true
         else
             obj.tracer.Visible = false
@@ -350,7 +480,7 @@ local function renderStep()
             obj.nameText.Text = p.DisplayName or p.Name
             obj.nameText.Size = Config.TextSize
             obj.nameText.Color = Config.TextColor
-            obj.nameText.Position = Vector2.new(pos3.X, boxY - 14)
+            obj.nameText.Position = Vector2.new(pos2d.X, boxY - 14)
             obj.nameText.Visible = true
         else
             obj.nameText.Visible = false
@@ -365,38 +495,33 @@ local function renderStep()
             obj.distText.Text = dist .. Config.Distance.Ending
             obj.distText.Size = Config.TextSize
             obj.distText.Color = Config.TextColor
-            obj.distText.Position = Vector2.new(pos3.X, boxY + boxH + Config.Distance.Gap)
+            obj.distText.Position = Vector2.new(pos2d.X, boxY + boxH + Config.Distance.Gap)
             obj.distText.Visible = true
         else
             obj.distText.Visible = false
         end
 
-        -- Health Bar (gradient)
+        -- Health Bar (gradasi hijau->kuning->merah)
         if Config.HealthBar.Enabled then
-            local hp = hum.Health / hum.MaxHealth
+            local hpPercent = hum.Health / hum.MaxHealth
             local barX = boxX - 6
-            local barW = Config.HealthBar.Width
             if Config.HealthBar.Position == "Right" then barX = boxX + boxW + 2 end
+            local barWidth = Config.HealthBar.Width
 
-            obj.hpBg.Size = Vector2.new(barW, boxH)
+            obj.hpBg.Size = Vector2.new(barWidth, boxH)
             obj.hpBg.Position = Vector2.new(barX, boxY)
             obj.hpBg.Visible = true
 
-            local fillH = boxH * hp
-            obj.hpFill.Size = Vector2.new(barW, fillH)
+            local fillH = boxH * hpPercent
+            obj.hpFill.Size = Vector2.new(barWidth, fillH)
             obj.hpFill.Position = Vector2.new(barX, boxY + boxH - fillH)
-            if Config.HealthBar.Gradient.Enabled then
-                local r = math.floor((1-hp)*255)
-                local g = math.floor(hp*255)
-                obj.hpFill.Color = Color3.fromRGB(r, g, 0)
-            else
-                obj.hpFill.Color = Color3.fromRGB(0,255,0)
-            end
+            obj.hpFill.Color = GetHealthColor(hpPercent)
             obj.hpFill.Visible = true
 
-            if Config.HealthBar.ShowText and (not Config.HealthBar.HideWhenFullHP or hp < 1) then
+            if Config.HealthBar.ShowText and (not Config.HealthBar.HideWhenFullHP or hpPercent < 1) then
                 obj.hpNum.Text = math.floor(hum.Health) .. " HP"
-                obj.hpNum.Position = Vector2.new(barX + barW/2, boxY - 8)
+                obj.hpNum.Color = GetHealthColor(hpPercent)
+                obj.hpNum.Position = Vector2.new(barX + barWidth/2, boxY - 8)
                 obj.hpNum.Visible = true
             else
                 obj.hpNum.Visible = false
@@ -407,14 +532,14 @@ local function renderStep()
             obj.hpNum.Visible = false
         end
 
-        -- Weapon
+        -- Weapon (PUTIH sekarang)
         if Config.Weapon.Enabled then
             local wep = cache[p] and cache[p].weaponName
             if wep then
                 obj.weaponText.Text = wep
                 obj.weaponText.Size = Config.TextSize
-                obj.weaponText.Color = Color3.fromRGB(255,200,80)
-                obj.weaponText.Position = Vector2.new(pos3.X, boxY + boxH + Config.Distance.Gap + 12)
+                obj.weaponText.Color = Config.Weapon.Color  -- PUTIH
+                obj.weaponText.Position = Vector2.new(pos2d.X, boxY + boxH + Config.Distance.Gap + 12)
                 obj.weaponText.Visible = true
             else
                 obj.weaponText.Visible = false
@@ -440,19 +565,18 @@ local function renderStep()
             updateSkeleton(ch, obj, cam)
         else
             for _, l in ipairs(obj.skeleton) do l.Visible = false end
+            for i = 1, 14 do obj.skeletonLastPos[i] = nil end
         end
     end
 end
 
--- Public API (mirip SensoryESP)
+-- Public API
 function LightESP:Load(customConfig)
     self:Unload()
     if customConfig then
         for k, v in pairs(customConfig) do Config[k] = v end
     end
-    -- Tambahan: jika ada Directories, abaikan (biar ringan)
     renderConn = RunService.RenderStepped:Connect(renderStep)
-    -- Keybind
     if Config.Keybind.Enabled then
         UserInputService.InputBegan:Connect(function(input, gpe)
             if not gpe and input.KeyCode == Config.Keybind.Key then
@@ -470,6 +594,7 @@ function LightESP:Unload()
     cache = {}
     for p, _ in pairs(connections) do disconnectPlayer(p) end
     connections = {}
+    if ChamsContainer then ChamsContainer:Destroy(); ChamsContainer = nil end
 end
 
 function LightESP:GetConfig()
@@ -478,6 +603,12 @@ end
 
 function LightESP:UpdateConfig(new)
     for k, v in pairs(new) do Config[k] = v end
+    -- Update warna weapon text untuk semua objek yang sudah ada
+    for p, obj in pairs(espObjs) do
+        if obj.weaponText then
+            obj.weaponText.Color = Config.Weapon.Color or Color3.fromRGB(255,255,255)
+        end
+    end
 end
 
 function LightESP:SetEnabled(enabled)
