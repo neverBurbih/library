@@ -1,6 +1,5 @@
--- LightESP - Final Stable
+-- LightESP - Ultra Stable
 -- API kompatibel dengan SensoryESP
--- Tidak ada error, tidak ada jitter, skeleton aman
 
 local LightESP = {}
 local Players = game:GetService("Players")
@@ -9,7 +8,9 @@ local UserInputService = game:GetService("UserInputService")
 local plr = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
 
-if getgenv().__LightESP_LOADED then return getgenv().__LightESP_LOADED end
+if getgenv().__LightESP_LOADED then
+    return getgenv().__LightESP_LOADED
+end
 
 -- Konfigurasi default
 local Config = {
@@ -34,7 +35,6 @@ local Config = {
     Tracer = false,
 }
 
--- Internal state
 local espObjs = {}
 local cache = {}
 local connections = {}
@@ -43,12 +43,11 @@ local lastRender = 0
 local lastScan = 0
 local ChamsContainer = nil
 
--- Helper lerp untuk Vector2 (karena Drawing API tidak punya :Lerp)
+-- Helper lerp manual
 local function lerpVec2(a, b, t)
     return Vector2.new(a.X + (b.X - a.X) * t, a.Y + (b.Y - a.Y) * t)
 end
 
--- Helper warna health gradient (hijau->kuning->merah)
 local function getHealthColor(percent)
     if percent >= 0.5 then
         local t = (percent - 0.5) * 2
@@ -59,7 +58,6 @@ local function getHealthColor(percent)
     end
 end
 
--- Helper cooking keywords
 local COOKING_KW = {"water","sugar","gelatin","marshmallow","empty bag"}
 local function isCooking(name)
     local n = name:lower()
@@ -69,7 +67,6 @@ local function isCooking(name)
     return false
 end
 
--- Cache weapon & cooking
 local function rebuildCache(p)
     if not p or not p.Parent then return end
     local hasCooking = false
@@ -92,7 +89,6 @@ local function rebuildCache(p)
     cache[p] = { hasCooking = hasCooking, weaponName = weaponName }
 end
 
--- Koneksi event untuk update cache
 local function connectPlayer(p)
     if p == plr or connections[p] then return end
     local conns = {}
@@ -110,22 +106,28 @@ local function connectPlayer(p)
         table.insert(conns, ch.ChildRemoved:Connect(function(v) if v:IsA("Tool") then rebuildCache(p) end end))
         rebuildCache(p)
         
-        if espObjs[p] and Config.Chams.Enabled and ch then
-            if espObjs[p].Highlight then espObjs[p].Highlight:Destroy() end
+        if Config.Chams.Enabled and ch then
+            if espObjs[p] and espObjs[p].Highlight then espObjs[p].Highlight:Destroy() end
             if not ChamsContainer then
-                ChamsContainer = Instance.new("Folder", gethui and gethui() or game:GetService("CoreGui"))
-                ChamsContainer.Name = "LightESP_Chams"
+                local parent = gethui and gethui() or game:GetService("CoreGui")
+                if parent then
+                    ChamsContainer = Instance.new("Folder")
+                    ChamsContainer.Name = "LightESP_Chams"
+                    ChamsContainer.Parent = parent
+                end
             end
-            local hl = Instance.new("Highlight")
-            hl.Name = "ESP_Highlight"
-            hl.Parent = ChamsContainer
-            hl.Adornee = ch
-            hl.FillColor = Config.Chams.Highlight.FillColor
-            hl.FillTransparency = Config.Chams.Highlight.FillTransparency
-            hl.OutlineColor = Config.Chams.Highlight.OutlineColor
-            hl.OutlineTransparency = Config.Chams.Highlight.OutlineTransparency
-            hl.Enabled = true
-            espObjs[p].Highlight = hl
+            if ChamsContainer then
+                local hl = Instance.new("Highlight")
+                hl.Name = "ESP_Highlight"
+                hl.Parent = ChamsContainer
+                hl.Adornee = ch
+                hl.FillColor = Config.Chams.Highlight.FillColor
+                hl.FillTransparency = Config.Chams.Highlight.FillTransparency
+                hl.OutlineColor = Config.Chams.Highlight.OutlineColor
+                hl.OutlineTransparency = Config.Chams.Highlight.OutlineTransparency
+                hl.Enabled = true
+                if espObjs[p] then espObjs[p].Highlight = hl end
+            end
         end
     end
     
@@ -142,7 +144,6 @@ local function disconnectPlayer(p)
     cache[p] = nil
 end
 
--- Hitung posisi box stabil (non-dynamic)
 local function getStableBox(character, hum, rootPart)
     if not character or not hum or not rootPart then return nil, nil end
     local isR6 = hum.RigType == Enum.HumanoidRigType.R6
@@ -160,7 +161,6 @@ local function getStableBox(character, hum, rootPart)
     return Vector2.new(centerX, centerY), Vector2.new(height * 0.65, height)
 end
 
--- Buat objek drawing untuk satu player
 local function createESPObj(p)
     local obj = {
         box = Drawing.new("Square"),
@@ -266,7 +266,6 @@ local function removeESP(p)
     disconnectPlayer(p)
 end
 
--- Data skeleton
 local SKEL_BONES = {
     {"Head","UpperTorso"}, {"UpperTorso","LowerTorso"},
     {"UpperTorso","RightUpperArm"}, {"RightUpperArm","RightLowerArm"}, {"RightLowerArm","RightHand"},
@@ -299,7 +298,7 @@ local function updateSkeleton(ch, obj)
     end
 end
 
--- Main render
+-- Main render tanpa goto
 local function renderStep()
     if not Config.Enabled then
         for _, obj in pairs(espObjs) do hideESP(obj) end
@@ -330,190 +329,195 @@ local function renderStep()
         local hum = ch and ch:FindFirstChildOfClass("Humanoid")
         local root = ch and ch:FindFirstChild("HumanoidRootPart")
         
-        if not ch or not hum or not root or hum.Health <= 0 then
+        local shouldHide = true
+        
+        if ch and hum and root and hum.Health > 0 then
+            if not (localRoot and (root.Position - localRoot.Position).Magnitude > Config.MaxDistance) then
+                shouldHide = false
+            end
+        end
+        
+        if shouldHide then
             hideESP(obj)
             if obj.Highlight then obj.Highlight.Enabled = false end
-            goto continue
-        end
-        
-        if localRoot and (root.Position - localRoot.Position).Magnitude > Config.MaxDistance then
-            hideESP(obj)
-            if obj.Highlight then obj.Highlight.Enabled = false end
-            goto continue
-        end
-        
-        -- Chams
-        if Config.Chams.Enabled then
-            if not obj.Highlight then
-                if not ChamsContainer then
-                    ChamsContainer = Instance.new("Folder", gethui and gethui() or game:GetService("CoreGui"))
-                    ChamsContainer.Name = "LightESP_Chams"
+        else
+            -- Update Chams
+            if Config.Chams.Enabled then
+                if not obj.Highlight then
+                    if not ChamsContainer then
+                        local parent = gethui and gethui() or game:GetService("CoreGui")
+                        if parent then
+                            ChamsContainer = Instance.new("Folder")
+                            ChamsContainer.Name = "LightESP_Chams"
+                            ChamsContainer.Parent = parent
+                        end
+                    end
+                    if ChamsContainer then
+                        obj.Highlight = Instance.new("Highlight")
+                        obj.Highlight.Name = "ESP_Highlight"
+                        obj.Highlight.Parent = ChamsContainer
+                    end
                 end
-                obj.Highlight = Instance.new("Highlight")
-                obj.Highlight.Name = "ESP_Highlight"
-                obj.Highlight.Parent = ChamsContainer
-            end
-            obj.Highlight.Adornee = ch
-            obj.Highlight.FillColor = Config.Chams.Highlight.FillColor
-            obj.Highlight.FillTransparency = Config.Chams.Highlight.FillTransparency
-            obj.Highlight.OutlineColor = Config.Chams.Highlight.OutlineColor
-            obj.Highlight.OutlineTransparency = Config.Chams.Highlight.OutlineTransparency
-            obj.Highlight.Enabled = true
-        elseif obj.Highlight then
-            obj.Highlight.Enabled = false
-        end
-        
-        local pos2d, size2d = getStableBox(ch, hum, root)
-        if not pos2d or not size2d then
-            hideESP(obj)
-            goto continue
-        end
-        
-        -- Smoothing manual (tanpa :Lerp)
-        if obj.lastPos and obj.lastSize then
-            pos2d = lerpVec2(obj.lastPos, pos2d, 0.4)
-            size2d = lerpVec2(obj.lastSize, size2d, 0.4)
-        end
-        obj.lastPos = pos2d
-        obj.lastSize = size2d
-        
-        local boxX = pos2d.X - size2d.X / 2
-        local boxY = pos2d.Y - size2d.Y / 2
-        local boxW = size2d.X
-        local boxH = size2d.Y
-        
-        -- Box
-        if Config.Boxes then
-            if Config.BoxType == "Normal" then
-                obj.box.Size = Vector2.new(boxW, boxH)
-                obj.box.Position = Vector2.new(boxX, boxY)
-                obj.box.Color = Config.BoxColor
-                obj.box.Visible = true
-                for _, l in ipairs(obj.corners) do l.Visible = false end
-            else
-                obj.box.Visible = false
-                local len = math.min(boxW, boxH) * 0.25
-                local c = obj.corners
-                c[1].From, c[1].To = Vector2.new(boxX, boxY), Vector2.new(boxX + len, boxY)
-                c[2].From, c[2].To = Vector2.new(boxX, boxY), Vector2.new(boxX, boxY + len)
-                c[3].From, c[3].To = Vector2.new(boxX + boxW, boxY), Vector2.new(boxX + boxW - len, boxY)
-                c[4].From, c[4].To = Vector2.new(boxX + boxW, boxY), Vector2.new(boxX + boxW, boxY + len)
-                c[5].From, c[5].To = Vector2.new(boxX, boxY + boxH), Vector2.new(boxX + len, boxY + boxH)
-                c[6].From, c[6].To = Vector2.new(boxX, boxY + boxH), Vector2.new(boxX, boxY + boxH - len)
-                c[7].From, c[7].To = Vector2.new(boxX + boxW, boxY + boxH), Vector2.new(boxX + boxW - len, boxY + boxH)
-                c[8].From, c[8].To = Vector2.new(boxX + boxW, boxY + boxH), Vector2.new(boxX + boxW, boxY + boxH - len)
-                for i = 1, 8 do
-                    c[i].Color = Config.BoxColor
-                    c[i].Visible = true
+                if obj.Highlight then
+                    obj.Highlight.Adornee = ch
+                    obj.Highlight.FillColor = Config.Chams.Highlight.FillColor
+                    obj.Highlight.FillTransparency = Config.Chams.Highlight.FillTransparency
+                    obj.Highlight.OutlineColor = Config.Chams.Highlight.OutlineColor
+                    obj.Highlight.OutlineTransparency = Config.Chams.Highlight.OutlineTransparency
+                    obj.Highlight.Enabled = true
                 end
+            elseif obj.Highlight then
+                obj.Highlight.Enabled = false
             end
-        else
-            obj.box.Visible = false
-            for _, l in ipairs(obj.corners) do l.Visible = false end
-        end
-        
-        -- Tracer
-        if Config.Tracer and obj.tracer then
-            obj.tracer.From = Vector2.new(vp.X / 2, vp.Y)
-            obj.tracer.To = Vector2.new(pos2d.X, boxY + boxH)
-            obj.tracer.Visible = true
-        elseif obj.tracer then
-            obj.tracer.Visible = false
-        end
-        
-        -- Name
-        if Config.Names then
-            obj.nameText.Text = p.DisplayName or p.Name
-            obj.nameText.Size = Config.TextSize
-            obj.nameText.Color = Config.TextColor
-            obj.nameText.Position = Vector2.new(pos2d.X, boxY - 14)
-            obj.nameText.Visible = true
-        else
-            obj.nameText.Visible = false
-        end
-        
-        -- Distance
-        if Config.Distance.Enabled and localRoot then
-            local dist = math.floor((root.Position - localRoot.Position).Magnitude)
-            if Config.Distance.Unit == "Meters" then
-                dist = math.floor(dist / Config.Distance.StudsPerMeter)
-            end
-            obj.distText.Text = dist .. Config.Distance.Ending
-            obj.distText.Size = Config.TextSize
-            obj.distText.Color = Config.TextColor
-            obj.distText.Position = Vector2.new(pos2d.X, boxY + boxH + Config.Distance.Gap)
-            obj.distText.Visible = true
-        else
-            obj.distText.Visible = false
-        end
-        
-        -- Health Bar
-        if Config.HealthBar.Enabled then
-            local hpPercent = hum.Health / hum.MaxHealth
-            local barX = boxX - 6
-            if Config.HealthBar.Position == "Right" then barX = boxX + boxW + 2 end
-            local barW = Config.HealthBar.Width
             
-            obj.hpBg.Size = Vector2.new(barW, boxH)
-            obj.hpBg.Position = Vector2.new(barX, boxY)
-            obj.hpBg.Visible = true
-            
-            local fillH = boxH * hpPercent
-            obj.hpFill.Size = Vector2.new(barW, fillH)
-            obj.hpFill.Position = Vector2.new(barX, boxY + boxH - fillH)
-            obj.hpFill.Color = getHealthColor(hpPercent)
-            obj.hpFill.Visible = true
-            
-            if Config.HealthBar.ShowText and (not Config.HealthBar.HideWhenFullHP or hpPercent < 1) then
-                obj.hpNum.Text = math.floor(hum.Health) .. " HP"
-                obj.hpNum.Color = getHealthColor(hpPercent)
-                obj.hpNum.Position = Vector2.new(barX + barW / 2, boxY - 8)
-                obj.hpNum.Visible = true
+            local pos2d, size2d = getStableBox(ch, hum, root)
+            if pos2d and size2d then
+                if obj.lastPos and obj.lastSize then
+                    pos2d = lerpVec2(obj.lastPos, pos2d, 0.4)
+                    size2d = lerpVec2(obj.lastSize, size2d, 0.4)
+                end
+                obj.lastPos = pos2d
+                obj.lastSize = size2d
+                
+                local boxX = pos2d.X - size2d.X / 2
+                local boxY = pos2d.Y - size2d.Y / 2
+                local boxW = size2d.X
+                local boxH = size2d.Y
+                
+                -- Box
+                if Config.Boxes then
+                    if Config.BoxType == "Normal" then
+                        obj.box.Size = Vector2.new(boxW, boxH)
+                        obj.box.Position = Vector2.new(boxX, boxY)
+                        obj.box.Color = Config.BoxColor
+                        obj.box.Visible = true
+                        for _, l in ipairs(obj.corners) do l.Visible = false end
+                    else
+                        obj.box.Visible = false
+                        local len = math.min(boxW, boxH) * 0.25
+                        local c = obj.corners
+                        c[1].From, c[1].To = Vector2.new(boxX, boxY), Vector2.new(boxX + len, boxY)
+                        c[2].From, c[2].To = Vector2.new(boxX, boxY), Vector2.new(boxX, boxY + len)
+                        c[3].From, c[3].To = Vector2.new(boxX + boxW, boxY), Vector2.new(boxX + boxW - len, boxY)
+                        c[4].From, c[4].To = Vector2.new(boxX + boxW, boxY), Vector2.new(boxX + boxW, boxY + len)
+                        c[5].From, c[5].To = Vector2.new(boxX, boxY + boxH), Vector2.new(boxX + len, boxY + boxH)
+                        c[6].From, c[6].To = Vector2.new(boxX, boxY + boxH), Vector2.new(boxX, boxY + boxH - len)
+                        c[7].From, c[7].To = Vector2.new(boxX + boxW, boxY + boxH), Vector2.new(boxX + boxW - len, boxY + boxH)
+                        c[8].From, c[8].To = Vector2.new(boxX + boxW, boxY + boxH), Vector2.new(boxX + boxW, boxY + boxH - len)
+                        for i = 1, 8 do
+                            c[i].Color = Config.BoxColor
+                            c[i].Visible = true
+                        end
+                    end
+                else
+                    obj.box.Visible = false
+                    for _, l in ipairs(obj.corners) do l.Visible = false end
+                end
+                
+                -- Tracer
+                if Config.Tracer and obj.tracer then
+                    obj.tracer.From = Vector2.new(vp.X / 2, vp.Y)
+                    obj.tracer.To = Vector2.new(pos2d.X, boxY + boxH)
+                    obj.tracer.Visible = true
+                elseif obj.tracer then
+                    obj.tracer.Visible = false
+                end
+                
+                -- Name
+                if Config.Names then
+                    obj.nameText.Text = p.DisplayName or p.Name
+                    obj.nameText.Size = Config.TextSize
+                    obj.nameText.Color = Config.TextColor
+                    obj.nameText.Position = Vector2.new(pos2d.X, boxY - 14)
+                    obj.nameText.Visible = true
+                else
+                    obj.nameText.Visible = false
+                end
+                
+                -- Distance
+                if Config.Distance.Enabled and localRoot then
+                    local dist = math.floor((root.Position - localRoot.Position).Magnitude)
+                    if Config.Distance.Unit == "Meters" then
+                        dist = math.floor(dist / Config.Distance.StudsPerMeter)
+                    end
+                    obj.distText.Text = dist .. Config.Distance.Ending
+                    obj.distText.Size = Config.TextSize
+                    obj.distText.Color = Config.TextColor
+                    obj.distText.Position = Vector2.new(pos2d.X, boxY + boxH + Config.Distance.Gap)
+                    obj.distText.Visible = true
+                else
+                    obj.distText.Visible = false
+                end
+                
+                -- Health Bar
+                if Config.HealthBar.Enabled then
+                    local hpPercent = hum.Health / hum.MaxHealth
+                    local barX = boxX - 6
+                    if Config.HealthBar.Position == "Right" then barX = boxX + boxW + 2 end
+                    local barW = Config.HealthBar.Width
+                    
+                    obj.hpBg.Size = Vector2.new(barW, boxH)
+                    obj.hpBg.Position = Vector2.new(barX, boxY)
+                    obj.hpBg.Visible = true
+                    
+                    local fillH = boxH * hpPercent
+                    obj.hpFill.Size = Vector2.new(barW, fillH)
+                    obj.hpFill.Position = Vector2.new(barX, boxY + boxH - fillH)
+                    obj.hpFill.Color = getHealthColor(hpPercent)
+                    obj.hpFill.Visible = true
+                    
+                    if Config.HealthBar.ShowText and (not Config.HealthBar.HideWhenFullHP or hpPercent < 1) then
+                        obj.hpNum.Text = math.floor(hum.Health) .. " HP"
+                        obj.hpNum.Color = getHealthColor(hpPercent)
+                        obj.hpNum.Position = Vector2.new(barX + barW / 2, boxY - 8)
+                        obj.hpNum.Visible = true
+                    else
+                        obj.hpNum.Visible = false
+                    end
+                else
+                    obj.hpBg.Visible = false
+                    obj.hpFill.Visible = false
+                    obj.hpNum.Visible = false
+                end
+                
+                -- Weapon
+                if Config.Weapon.Enabled then
+                    local wep = cache[p] and cache[p].weaponName
+                    if wep then
+                        obj.weaponText.Text = wep
+                        obj.weaponText.Size = Config.TextSize
+                        obj.weaponText.Color = Config.Weapon.Color
+                        obj.weaponText.Position = Vector2.new(pos2d.X, boxY + boxH + Config.Distance.Gap + 12)
+                        obj.weaponText.Visible = true
+                    else
+                        obj.weaponText.Visible = false
+                    end
+                else
+                    obj.weaponText.Visible = false
+                end
+                
+                -- Cooking indicator
+                if Config.CookingIndicator and cache[p] and cache[p].hasCooking then
+                    obj.cookingText.Text = "🍳 MASAK"
+                    obj.cookingText.Size = Config.TextSize
+                    obj.cookingText.Color = Color3.fromRGB(0, 255, 100)
+                    obj.cookingText.Position = Vector2.new(boxX + boxW + 5, boxY + boxH / 2 - 8)
+                    obj.cookingText.Center = false
+                    obj.cookingText.Visible = true
+                else
+                    obj.cookingText.Visible = false
+                end
+                
+                -- Skeleton
+                if Config.Skeleton.Enabled then
+                    updateSkeleton(ch, obj)
+                else
+                    for _, l in ipairs(obj.skeleton) do l.Visible = false end
+                end
             else
-                obj.hpNum.Visible = false
+                hideESP(obj)
             end
-        else
-            obj.hpBg.Visible = false
-            obj.hpFill.Visible = false
-            obj.hpNum.Visible = false
         end
-        
-        -- Weapon (putih)
-        if Config.Weapon.Enabled then
-            local wep = cache[p] and cache[p].weaponName
-            if wep then
-                obj.weaponText.Text = wep
-                obj.weaponText.Size = Config.TextSize
-                obj.weaponText.Color = Config.Weapon.Color
-                obj.weaponText.Position = Vector2.new(pos2d.X, boxY + boxH + Config.Distance.Gap + 12)
-                obj.weaponText.Visible = true
-            else
-                obj.weaponText.Visible = false
-            end
-        else
-            obj.weaponText.Visible = false
-        end
-        
-        -- Cooking indicator
-        if Config.CookingIndicator and cache[p] and cache[p].hasCooking then
-            obj.cookingText.Text = "🍳 MASAK"
-            obj.cookingText.Size = Config.TextSize
-            obj.cookingText.Color = Color3.fromRGB(0, 255, 100)
-            obj.cookingText.Position = Vector2.new(boxX + boxW + 5, boxY + boxH / 2 - 8)
-            obj.cookingText.Center = false
-            obj.cookingText.Visible = true
-        else
-            obj.cookingText.Visible = false
-        end
-        
-        -- Skeleton
-        if Config.Skeleton.Enabled then
-            updateSkeleton(ch, obj)
-        else
-            for _, l in ipairs(obj.skeleton) do l.Visible = false end
-        end
-        
-        ::continue::
     end
 end
 
@@ -550,7 +554,6 @@ end
 
 function LightESP:UpdateConfig(new)
     for k, v in pairs(new) do Config[k] = v end
-    -- Update drawing properties for existing objects
     for _, obj in pairs(espObjs) do
         if obj.weaponText then obj.weaponText.Color = Config.Weapon.Color end
         for _, l in ipairs(obj.skeleton) do
