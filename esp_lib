@@ -1,87 +1,36 @@
---[[
-    LightESP - Ringan + Chams + Skeleton Smooth + HP Gradient
-    API kompatibel dengan SensoryESP
-]]
+-- LightESP - Final Stable Version
+-- No jitter, no ghost, no skeleton crash
 
 local LightESP = {}
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
 local plr = Players.LocalPlayer
 local Camera = workspace.CurrentCamera
-local HttpService = game:GetService("HttpService")
-local CoreGui = game:GetService("CoreGui")
-local gethui = gethui or function() return CoreGui end
 
 if getgenv().__LightESP_LOADED then return getgenv().__LightESP_LOADED end
 
--- Konfigurasi default (mirip SensoryESP tapi ringan)
 local Config = {
     Enabled = true,
     Keybind = { Enabled = true, Key = Enum.KeyCode.Insert },
     Players = true,
     LocalPlayer = false,
-    LimitFPS = 0,
-    DynamicBoxes = false,
+    LimitFPS = 60,
     Boxes = true,
     BoxType = "Corner",
     BoxColor = Color3.fromRGB(255,255,255),
     BoxThickness = 1,
-    Outlines = { Enabled = true, Color = Color3.fromRGB(0,0,0), Thickness = 1 },
-    HealthBar = {
-        Enabled = true,
-        Position = "Left",
-        Width = 2,
-        ShowText = true,
-        HideWhenFullHP = true,
-        Gradient = { Enabled = true }
-    },
     Names = true,
     TextSize = 11,
     TextColor = Color3.fromRGB(255,255,255),
     TextOutline = true,
     Distance = { Enabled = true, Unit = "Meters", StudsPerMeter = 3, Ending = "m", Gap = 2 },
-    Weapon = { 
-        Enabled = true, 
-        Gap = 1, 
-        UseToolFallback = true,
-        Color = Color3.fromRGB(255,255,255)  -- putih default
-    },
-    Skeleton = { 
-        Enabled = false, 
-        Color = Color3.fromRGB(255,255,255), 
-        Outline = true, 
-        OutlineColor = Color3.fromRGB(0,0,0), 
-        Thickness = 1, 
-        Smoothing = 0.3 
-    },
+    HealthBar = { Enabled = true, Position = "Left", Width = 2, ShowText = true, HideWhenFullHP = true },
+    Weapon = { Enabled = true, Color = Color3.fromRGB(255,255,255) },
+    Skeleton = { Enabled = false, Color = Color3.fromRGB(255,255,255), Thickness = 1 },
     CookingIndicator = false,
+    Chams = { Enabled = false, Highlight = { FillColor = Color3.fromRGB(59,144,204), FillTransparency = 0.6, OutlineColor = Color3.fromRGB(255,255,255), OutlineTransparency = 0 } },
     MaxDistance = 500,
-    Chams = {
-        Enabled = false,
-        Type = "Highlight", -- "Highlight", "Adornment", "MeshChams"
-        Highlight = {
-            FillColor = Color3.fromRGB(59, 144, 204),
-            FillTransparency = 0.6,
-            OutlineColor = Color3.fromRGB(255, 255, 255),
-            OutlineTransparency = 0,
-            VisibleCheck = false,
-        },
-        Adornment = {
-            Color = Color3.fromRGB(59, 144, 204),
-            Transparency = 0.7,
-            AlwaysOnTop = true,
-        },
-        MeshChams = {
-            FillColor = Color3.fromRGB(59, 144, 204),
-            FillTransparency = 0.6,
-            OutlineColor = Color3.fromRGB(255, 255, 255),
-            OutlineTransparency = 0,
-            VisibleCheck = false,
-        }
-    },
-    Directories = {}
 }
 
 local espObjs = {}
@@ -91,62 +40,7 @@ local renderConn = nil
 local lastRender = 0
 local lastScan = 0
 local ChamsContainer = nil
-local MeshChamsFolder = nil
-local CurrentRunId = HttpService:GenerateGUID(false)
 
--- Helper chams cleanup
-local function IsMeshChamArtifact(obj)
-    if not obj then return false end
-    if obj:GetAttribute("LightESP_MeshCham") == true then return true end
-    if obj:IsA("Model") and obj.Name == "ChamShells" then return true end
-    if obj:IsA("BasePart") and obj.Name:match("^ChamShell_") then return true end
-    if obj:IsA("Highlight") and obj.Name == "ChamShellHighlight" then return true end
-    return false
-end
-
-local function CleanupMeshChams(root)
-    if not root then return end
-    for _, obj in ipairs(root:GetDescendants()) do
-        if IsMeshChamArtifact(obj) then pcall(function() obj:Destroy() end) end
-    end
-end
-
-local function CleanupCharacterMeshChams(character)
-    if not character then return end
-    for _, child in ipairs(character:GetChildren()) do
-        if IsMeshChamArtifact(child) then pcall(function() child:Destroy() end) end
-    end
-end
-
-local function EnsureRootInstances()
-    if not ChamsContainer or not ChamsContainer.Parent then
-        ChamsContainer = Instance.new("Folder")
-        ChamsContainer.Name = "LightESP_Chams"
-        ChamsContainer.Parent = gethui()
-    end
-    if not MeshChamsFolder or not MeshChamsFolder.Parent then
-        MeshChamsFolder = Instance.new("Folder")
-        MeshChamsFolder.Name = "LightESP_MeshChams"
-        MeshChamsFolder.Parent = workspace
-    end
-end
-
--- Helper fungsi untuk health color gradient
-local function GetHealthColor(percent)
-    if percent >= 0.5 then
-        local t = (percent - 0.5) * 2
-        local r = math.floor(255 * (1 - t))
-        local g = 255
-        return Color3.fromRGB(r, g, 0)
-    else
-        local t = percent * 2
-        local r = 255
-        local g = math.floor(255 * t)
-        return Color3.fromRGB(r, g, 0)
-    end
-end
-
--- Helper cooking keywords
 local COOKING_KW = {"water","sugar","gelatin","marshmallow","empty bag"}
 local function isCooking(name)
     local n = name:lower()
@@ -190,6 +84,19 @@ local function connectPlayer(p)
         table.insert(conns, ch.ChildAdded:Connect(function(v) if v:IsA("Tool") then rebuildCache(p) end end))
         table.insert(conns, ch.ChildRemoved:Connect(function(v) if v:IsA("Tool") then rebuildCache(p) end end))
         rebuildCache(p)
+        if espObjs[p] and Config.Chams.Enabled and ch then
+            if espObjs[p].Highlight then espObjs[p].Highlight:Destroy() end
+            local hl = Instance.new("Highlight")
+            hl.Name = "ESP_Highlight"
+            hl.Parent = ChamsContainer or (function() ChamsContainer = Instance.new("Folder", gethui and gethui() or game:GetService("CoreGui")) ChamsContainer.Name = "LightESP_Chams" return ChamsContainer end)()
+            hl.Adornee = ch
+            hl.FillColor = Config.Chams.Highlight.FillColor
+            hl.FillTransparency = Config.Chams.Highlight.FillTransparency
+            hl.OutlineColor = Config.Chams.Highlight.OutlineColor
+            hl.OutlineTransparency = Config.Chams.Highlight.OutlineTransparency
+            hl.Enabled = true
+            espObjs[p].Highlight = hl
+        end
     end
     if p.Character then watchChar(p.Character) end
     table.insert(conns, p.CharacterAdded:Connect(watchChar))
@@ -204,7 +111,6 @@ local function disconnectPlayer(p)
     cache[p] = nil
 end
 
--- Stabil box calculation (non-dynamic)
 local function getStableBox(character, hum, rootPart)
     if not character or not hum or not rootPart then return nil, nil end
     local isR6 = hum.RigType == Enum.HumanoidRigType.R6
@@ -214,18 +120,19 @@ local function getStableBox(character, hum, rootPart)
     local bottomPos = rootPart.Position - Vector3.new(0, bottomOffset, 0)
     local top2D = Camera:WorldToViewportPoint(topPos)
     local bottom2D = Camera:WorldToViewportPoint(bottomPos)
+    if top2D.Z <= 0 or bottom2D.Z <= 0 then return nil, nil end
     local height = math.abs(top2D.Y - bottom2D.Y)
+    if height < 1 then return nil, nil end
     local centerX = (top2D.X + bottom2D.X) / 2
     local centerY = (top2D.Y + bottom2D.Y) / 2
     return Vector2.new(centerX, centerY), Vector2.new(height * 0.65, height)
 end
 
--- Drawing objects
 local function createESPObj(p)
     local obj = {
         box = Drawing.new("Square"),
         corners = {},
-        tracer = Drawing.new("Line"),
+        tracer = nil,
         nameText = Drawing.new("Text"),
         distText = Drawing.new("Text"),
         hpBg = Drawing.new("Square"),
@@ -234,20 +141,20 @@ local function createESPObj(p)
         weaponText = Drawing.new("Text"),
         cookingText = Drawing.new("Text"),
         skeleton = {},
-        skeletonLastPos = {},
+        Highlight = nil,
         lastPos = nil,
         lastSize = nil,
-        -- Chams related
-        highlight = nil,
-        adornments = {},
-        meshShell = nil,
-        meshHighlight = nil,
     }
     obj.box.Thickness = Config.BoxThickness
     obj.box.Filled = false
     obj.box.Visible = false
-    obj.tracer.Thickness = 1.2
-    obj.tracer.Visible = false
+    
+    if Config.Tracer then
+        obj.tracer = Drawing.new("Line")
+        obj.tracer.Thickness = 1.2
+        obj.tracer.Visible = false
+    end
+    
     for _, t in ipairs({obj.nameText, obj.distText, obj.hpNum, obj.weaponText, obj.cookingText}) do
         t.Size = Config.TextSize
         t.Color = Config.TextColor
@@ -257,6 +164,8 @@ local function createESPObj(p)
         t.Font = Drawing.Fonts.Plex
         t.Visible = false
     end
+    obj.weaponText.Color = Config.Weapon.Color
+    
     obj.hpBg.Thickness = 1
     obj.hpBg.Filled = true
     obj.hpBg.Color = Color3.fromRGB(20,20,20)
@@ -266,6 +175,7 @@ local function createESPObj(p)
     obj.hpFill.Visible = false
     obj.hpNum.Size = 9
     obj.hpNum.Visible = false
+    
     for i = 1, 8 do
         local line = Drawing.new("Line")
         line.Thickness = Config.BoxThickness
@@ -273,21 +183,23 @@ local function createESPObj(p)
         line.Visible = false
         table.insert(obj.corners, line)
     end
+    
+    -- Skeleton lines (14)
     for i = 1, 14 do
         local line = Drawing.new("Line")
         line.Thickness = Config.Skeleton.Thickness
         line.Color = Config.Skeleton.Color
         line.Visible = false
         table.insert(obj.skeleton, line)
-        obj.skeletonLastPos[i] = nil
     end
+    
     return obj
 end
 
 local function hideESP(obj)
     if not obj then return end
     obj.box.Visible = false
-    obj.tracer.Visible = false
+    if obj.tracer then obj.tracer.Visible = false end
     obj.nameText.Visible = false
     obj.distText.Visible = false
     obj.hpBg.Visible = false
@@ -302,9 +214,10 @@ end
 local function removeESP(p)
     local obj = espObjs[p]
     if obj then
+        if obj.Highlight then obj.Highlight:Destroy() end
         pcall(function()
             obj.box:Remove()
-            obj.tracer:Remove()
+            if obj.tracer then obj.tracer:Remove() end
             obj.nameText:Remove()
             obj.distText:Remove()
             obj.hpBg:Remove()
@@ -314,156 +227,10 @@ local function removeESP(p)
             obj.cookingText:Remove()
             for _, l in ipairs(obj.corners) do l:Remove() end
             for _, l in ipairs(obj.skeleton) do l:Remove() end
-            -- Chams cleanup
-            if obj.highlight then obj.highlight:Destroy() end
-            for _, a in ipairs(obj.adornments) do a:Destroy() end
-            if obj.meshShell then obj.meshShell:Destroy() end
         end)
         espObjs[p] = nil
     end
     disconnectPlayer(p)
-end
-
--- Chams update function
-local function updateChams(instance, obj, isDead)
-    local chamsEnabled = Config.Chams.Enabled
-    if not chamsEnabled or isDead then
-        -- Hapus semua chams
-        if obj.highlight then obj.highlight:Destroy(); obj.highlight = nil end
-        for _, a in ipairs(obj.adornments) do a:Destroy() end
-        obj.adornments = {}
-        if obj.meshShell then obj.meshShell:Destroy(); obj.meshShell = nil; obj.meshHighlight = nil end
-        return
-    end
-
-    local chamType = Config.Chams.Type
-    EnsureRootInstances()
-
-    if chamType == "Highlight" then
-        -- Bersihkan yang lain
-        for _, a in ipairs(obj.adornments) do a:Destroy() end
-        obj.adornments = {}
-        if obj.meshShell then obj.meshShell:Destroy(); obj.meshShell = nil; obj.meshHighlight = nil end
-        
-        if not obj.highlight then
-            obj.highlight = Instance.new("Highlight")
-            obj.highlight.Name = "LightESP_Highlight"
-            obj.highlight.Parent = ChamsContainer
-        end
-        local h = obj.highlight
-        h.Adornee = instance
-        h.FillColor = Config.Chams.Highlight.FillColor
-        h.FillTransparency = Config.Chams.Highlight.FillTransparency
-        h.OutlineColor = Config.Chams.Highlight.OutlineColor
-        h.OutlineTransparency = Config.Chams.Highlight.OutlineTransparency
-        h.DepthMode = Config.Chams.Highlight.VisibleCheck and Enum.HighlightDepthMode.Occluded or Enum.HighlightDepthMode.AlwaysOnTop
-        h.Enabled = true
-    elseif chamType == "Adornment" then
-        if obj.highlight then obj.highlight:Destroy(); obj.highlight = nil end
-        if obj.meshShell then obj.meshShell:Destroy(); obj.meshShell = nil; obj.meshHighlight = nil end
-        
-        local parts = instance:IsA("Model") and instance:GetChildren() or {instance}
-        local idx = 0
-        for _, part in ipairs(parts) do
-            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
-                idx = idx + 1
-                local a = obj.adornments[idx]
-                if not a then
-                    a = Instance.new("BoxHandleAdornment")
-                    a.Name = "LightESP_Adornment"
-                    a.Parent = ChamsContainer
-                    obj.adornments[idx] = a
-                end
-                a.Adornee = part
-                a.Size = part.Size
-                a.Color3 = Config.Chams.Adornment.Color
-                a.Transparency = Config.Chams.Adornment.Transparency
-                a.AlwaysOnTop = Config.Chams.Adornment.AlwaysOnTop
-                a.ZIndex = 10
-                a.Visible = true
-            end
-        end
-        for i = idx+1, #obj.adornments do
-            obj.adornments[i]:Destroy()
-        end
-        obj.adornments = {unpack(obj.adornments, 1, idx)}
-    elseif chamType == "MeshChams" then
-        if obj.highlight then obj.highlight:Destroy(); obj.highlight = nil end
-        for _, a in ipairs(obj.adornments) do a:Destroy() end
-        obj.adornments = {}
-        
-        local playerOwner = Players:GetPlayerFromCharacter(instance)
-        if not playerOwner then
-            if obj.meshShell then obj.meshShell:Destroy(); obj.meshShell = nil; obj.meshHighlight = nil end
-            return
-        end
-        
-        if not obj.meshShell or not obj.meshShell.Parent then
-            if obj.meshShell then obj.meshShell:Destroy() end
-            CleanupCharacterMeshChams(instance)
-            
-            local r6Parts = {"Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}
-            local r15Parts = {
-                "Head", "UpperTorso", "LowerTorso",
-                "LeftUpperArm", "LeftLowerArm", "LeftHand",
-                "RightUpperArm", "RightLowerArm", "RightHand",
-                "LeftUpperLeg", "LeftLowerLeg", "LeftFoot",
-                "RightUpperLeg", "RightLowerLeg", "RightFoot",
-            }
-            local hum = instance:FindFirstChild("Humanoid")
-            local isR15 = hum and hum.RigType == Enum.HumanoidRigType.R15
-            local bodyParts = isR15 and r15Parts or r6Parts
-            
-            local shellModel = Instance.new("Model")
-            shellModel.Name = "ChamShells"
-            shellModel:SetAttribute("LightESP_MeshCham", true)
-            shellModel:SetAttribute("LightESP_RunId", CurrentRunId)
-            shellModel.Parent = MeshChamsFolder
-            
-            for _, partName in ipairs(bodyParts) do
-                local realPart = instance:FindFirstChild(partName)
-                if realPart and realPart:IsA("BasePart") then
-                    local shell = Instance.new("Part")
-                    shell.Name = "ChamShell_" .. partName
-                    shell:SetAttribute("LightESP_MeshCham", true)
-                    shell.Size = realPart.Size * 1.015
-                    shell.Transparency = 0.9999999
-                    shell.CastShadow = false
-                    shell.CanCollide = false
-                    shell.CanQuery = false
-                    shell.CanTouch = false
-                    shell.Anchored = false
-                    shell.Massless = true
-                    shell.CFrame = realPart.CFrame
-                    shell.Parent = shellModel
-                    
-                    local weld = Instance.new("Weld")
-                    weld.Part0 = shell
-                    weld.Part1 = realPart
-                    weld.C0 = CFrame.new()
-                    weld.C1 = CFrame.new()
-                    weld.Parent = shell
-                end
-            end
-            
-            local hl = Instance.new("Highlight")
-            hl.Name = "ChamShellHighlight"
-            hl:SetAttribute("LightESP_MeshCham", true)
-            hl.Adornee = shellModel
-            hl.Parent = shellModel
-            obj.meshShell = shellModel
-            obj.meshHighlight = hl
-        end
-        
-        if obj.meshHighlight then
-            obj.meshHighlight.FillColor = Config.Chams.MeshChams.FillColor
-            obj.meshHighlight.FillTransparency = Config.Chams.MeshChams.FillTransparency
-            obj.meshHighlight.OutlineColor = Config.Chams.MeshChams.OutlineColor
-            obj.meshHighlight.OutlineTransparency = Config.Chams.MeshChams.OutlineTransparency
-            obj.meshHighlight.DepthMode = Config.Chams.MeshChams.VisibleCheck and Enum.HighlightDepthMode.Occluded or Enum.HighlightDepthMode.AlwaysOnTop
-            obj.meshHighlight.Enabled = true
-        end
-    end
 end
 
 local SKEL_BONES = {
@@ -475,48 +242,49 @@ local SKEL_BONES = {
     {"RightUpperLeg","LeftUpperLeg"},
 }
 
-local function updateSkeleton(ch, obj, cam)
-    local smoothFactor = Config.Skeleton.Smoothing or 0.3
+local function updateSkeleton(ch, obj)
+    local cam = Camera
     for i, bones in ipairs(SKEL_BONES) do
+        local line = obj.skeleton[i]
+        if not line then continue end
         local p1 = ch:FindFirstChild(bones[1])
         local p2 = ch:FindFirstChild(bones[2])
-        local line = obj.skeleton[i]
         if p1 and p2 then
             local v1, o1 = cam:WorldToViewportPoint(p1.Position)
             local v2, o2 = cam:WorldToViewportPoint(p2.Position)
             if o1 and o2 and v1.Z > 0 and v2.Z > 0 then
-                local newFrom = Vector2.new(v1.X, v1.Y)
-                local newTo = Vector2.new(v2.X, v2.Y)
-                if obj.skeletonLastPos[i] then
-                    local lastFrom, lastTo = obj.skeletonLastPos[i].from, obj.skeletonLastPos[i].to
-                    newFrom = newFrom:Lerp(lastFrom, smoothFactor)
-                    newTo = newTo:Lerp(lastTo, smoothFactor)
-                end
-                line.From = newFrom
-                line.To = newTo
+                line.From = Vector2.new(v1.X, v1.Y)
+                line.To = Vector2.new(v2.X, v2.Y)
                 line.Visible = true
-                obj.skeletonLastPos[i] = { from = newFrom, to = newTo }
             else
                 line.Visible = false
-                obj.skeletonLastPos[i] = nil
             end
         else
             line.Visible = false
-            obj.skeletonLastPos[i] = nil
         end
+    end
+end
+
+local function getHealthColor(percent)
+    if percent >= 0.5 then
+        local t = (percent - 0.5) * 2
+        return Color3.fromRGB(math.floor(255 * (1 - t)), 255, 0)
+    else
+        local t = percent * 2
+        return Color3.fromRGB(255, math.floor(255 * t), 0)
     end
 end
 
 local function renderStep()
     if not Config.Enabled then
-        for p, obj in pairs(espObjs) do hideESP(obj) end
+        for _, obj in pairs(espObjs) do hideESP(obj) end
         return
     end
-
+    
     local now = tick()
     if Config.LimitFPS > 0 and (now - lastRender) < (1/Config.LimitFPS) then return end
     lastRender = now
-
+    
     if now - lastScan > 1 then
         lastScan = now
         for _, p in pairs(Players:GetPlayers()) do
@@ -526,52 +294,69 @@ local function renderStep()
             end
         end
     end
-
+    
     local cam = Camera
     local vp = cam.ViewportSize
     local localChar = plr.Character
     local localRoot = localChar and localChar:FindFirstChild("HumanoidRootPart")
-
+    
     for p, obj in pairs(espObjs) do
         local ch = p.Character
         local hum = ch and ch:FindFirstChildOfClass("Humanoid")
         local root = ch and ch:FindFirstChild("HumanoidRootPart")
-        local isDead = not hum or hum.Health <= 0
-
-        if not ch or not hum or not root or isDead then
+        
+        if not ch or not hum or not root or hum.Health <= 0 then
             hideESP(obj)
-            updateChams(ch, obj, true)
-            continue
+            if obj.Highlight then obj.Highlight.Enabled = false end
+            goto continue
         end
-
+        
         if localRoot and (root.Position - localRoot.Position).Magnitude > Config.MaxDistance then
             hideESP(obj)
-            updateChams(ch, obj, false) -- tetap update chams walau jauh? lebih baik matikan
-            continue
+            if obj.Highlight then obj.Highlight.Enabled = false end
+            goto continue
         end
-
-        -- Update Chams
-        updateChams(ch, obj, false)
-
+        
+        -- Chams
+        if Config.Chams.Enabled then
+            if not obj.Highlight then
+                if not ChamsContainer then
+                    ChamsContainer = Instance.new("Folder", gethui and gethui() or game:GetService("CoreGui"))
+                    ChamsContainer.Name = "LightESP_Chams"
+                end
+                obj.Highlight = Instance.new("Highlight")
+                obj.Highlight.Name = "ESP_Highlight"
+                obj.Highlight.Parent = ChamsContainer
+            end
+            obj.Highlight.Adornee = ch
+            obj.Highlight.FillColor = Config.Chams.Highlight.FillColor
+            obj.Highlight.FillTransparency = Config.Chams.Highlight.FillTransparency
+            obj.Highlight.OutlineColor = Config.Chams.Highlight.OutlineColor
+            obj.Highlight.OutlineTransparency = Config.Chams.Highlight.OutlineTransparency
+            obj.Highlight.Enabled = true
+        elseif obj.Highlight then
+            obj.Highlight.Enabled = false
+        end
+        
         local pos2d, size2d = getStableBox(ch, hum, root)
         if not pos2d or not size2d then
             hideESP(obj)
-            continue
+            goto continue
         end
-
-        -- Smoothing box
+        
+        -- Smoothing
         if obj.lastPos and obj.lastSize then
-            pos2d = pos2d:Lerp(obj.lastPos, 0.3)
-            size2d = size2d:Lerp(obj.lastSize, 0.3)
+            pos2d = pos2d:Lerp(obj.lastPos, 0.4)
+            size2d = size2d:Lerp(obj.lastSize, 0.4)
         end
         obj.lastPos = pos2d
         obj.lastSize = size2d
-
+        
         local boxX = pos2d.X - size2d.X/2
         local boxY = pos2d.Y - size2d.Y/2
         local boxW = size2d.X
         local boxH = size2d.Y
-
+        
         -- Box
         if Config.Boxes then
             if Config.BoxType == "Normal" then
@@ -580,45 +365,34 @@ local function renderStep()
                 obj.box.Color = Config.BoxColor
                 obj.box.Visible = true
                 for _, l in ipairs(obj.corners) do l.Visible = false end
-            else
+            else -- Corner
                 obj.box.Visible = false
                 local len = math.min(boxW, boxH) * 0.25
-                local corners = obj.corners
-                corners[1].From = Vector2.new(boxX, boxY)
-                corners[1].To = Vector2.new(boxX+len, boxY)
-                corners[2].From = Vector2.new(boxX, boxY)
-                corners[2].To = Vector2.new(boxX, boxY+len)
-                corners[3].From = Vector2.new(boxX+boxW, boxY)
-                corners[3].To = Vector2.new(boxX+boxW-len, boxY)
-                corners[4].From = Vector2.new(boxX+boxW, boxY)
-                corners[4].To = Vector2.new(boxX+boxW, boxY+len)
-                corners[5].From = Vector2.new(boxX, boxY+boxH)
-                corners[5].To = Vector2.new(boxX+len, boxY+boxH)
-                corners[6].From = Vector2.new(boxX, boxY+boxH)
-                corners[6].To = Vector2.new(boxX, boxY+boxH-len)
-                corners[7].From = Vector2.new(boxX+boxW, boxY+boxH)
-                corners[7].To = Vector2.new(boxX+boxW-len, boxY+boxH)
-                corners[8].From = Vector2.new(boxX+boxW, boxY+boxH)
-                corners[8].To = Vector2.new(boxX+boxW, boxY+boxH-len)
-                for _, l in ipairs(corners) do
-                    l.Color = Config.BoxColor
-                    l.Visible = true
-                end
+                local c = obj.corners
+                c[1].From, c[1].To = Vector2.new(boxX, boxY), Vector2.new(boxX+len, boxY)
+                c[2].From, c[2].To = Vector2.new(boxX, boxY), Vector2.new(boxX, boxY+len)
+                c[3].From, c[3].To = Vector2.new(boxX+boxW, boxY), Vector2.new(boxX+boxW-len, boxY)
+                c[4].From, c[4].To = Vector2.new(boxX+boxW, boxY), Vector2.new(boxX+boxW, boxY+len)
+                c[5].From, c[5].To = Vector2.new(boxX, boxY+boxH), Vector2.new(boxX+len, boxY+boxH)
+                c[6].From, c[6].To = Vector2.new(boxX, boxY+boxH), Vector2.new(boxX, boxY+boxH-len)
+                c[7].From, c[7].To = Vector2.new(boxX+boxW, boxY+boxH), Vector2.new(boxX+boxW-len, boxY+boxH)
+                c[8].From, c[8].To = Vector2.new(boxX+boxW, boxY+boxH), Vector2.new(boxX+boxW, boxY+boxH-len)
+                for i=1,8 do c[i].Color = Config.BoxColor; c[i].Visible = true end
             end
         else
             obj.box.Visible = false
             for _, l in ipairs(obj.corners) do l.Visible = false end
         end
-
+        
         -- Tracer
-        if Config.Tracer then
+        if Config.Tracer and obj.tracer then
             obj.tracer.From = Vector2.new(vp.X/2, vp.Y)
             obj.tracer.To = Vector2.new(pos2d.X, boxY+boxH)
             obj.tracer.Visible = true
-        else
+        elseif obj.tracer then
             obj.tracer.Visible = false
         end
-
+        
         -- Name
         if Config.Names then
             obj.nameText.Text = p.DisplayName or p.Name
@@ -629,7 +403,7 @@ local function renderStep()
         else
             obj.nameText.Visible = false
         end
-
+        
         -- Distance
         if Config.Distance.Enabled and localRoot then
             local dist = math.floor((root.Position - localRoot.Position).Magnitude)
@@ -644,36 +418,25 @@ local function renderStep()
         else
             obj.distText.Visible = false
         end
-
+        
         -- Health Bar
         if Config.HealthBar.Enabled then
             local hpPercent = hum.Health / hum.MaxHealth
             local barX = boxX - 6
             if Config.HealthBar.Position == "Right" then barX = boxX + boxW + 2 end
-            local barWidth = Config.HealthBar.Width
-
-            obj.hpBg.Size = Vector2.new(barWidth, boxH)
+            local barW = Config.HealthBar.Width
+            obj.hpBg.Size = Vector2.new(barW, boxH)
             obj.hpBg.Position = Vector2.new(barX, boxY)
             obj.hpBg.Visible = true
-
             local fillH = boxH * hpPercent
-            obj.hpFill.Size = Vector2.new(barWidth, fillH)
+            obj.hpFill.Size = Vector2.new(barW, fillH)
             obj.hpFill.Position = Vector2.new(barX, boxY + boxH - fillH)
-            if Config.HealthBar.Gradient.Enabled then
-                obj.hpFill.Color = GetHealthColor(hpPercent)
-            else
-                obj.hpFill.Color = Color3.fromRGB(0,255,0)
-            end
+            obj.hpFill.Color = getHealthColor(hpPercent)
             obj.hpFill.Visible = true
-
             if Config.HealthBar.ShowText and (not Config.HealthBar.HideWhenFullHP or hpPercent < 1) then
                 obj.hpNum.Text = math.floor(hum.Health) .. " HP"
-                if Config.HealthBar.Gradient.Enabled then
-                    obj.hpNum.Color = GetHealthColor(hpPercent)
-                else
-                    obj.hpNum.Color = Color3.fromRGB(255,255,255)
-                end
-                obj.hpNum.Position = Vector2.new(barX + barWidth/2, boxY - 8)
+                obj.hpNum.Color = getHealthColor(hpPercent)
+                obj.hpNum.Position = Vector2.new(barX + barW/2, boxY - 8)
                 obj.hpNum.Visible = true
             else
                 obj.hpNum.Visible = false
@@ -683,14 +446,14 @@ local function renderStep()
             obj.hpFill.Visible = false
             obj.hpNum.Visible = false
         end
-
-        -- Weapon (warna putih)
+        
+        -- Weapon
         if Config.Weapon.Enabled then
             local wep = cache[p] and cache[p].weaponName
             if wep then
                 obj.weaponText.Text = wep
                 obj.weaponText.Size = Config.TextSize
-                obj.weaponText.Color = Config.Weapon.Color or Color3.fromRGB(255,255,255)
+                obj.weaponText.Color = Config.Weapon.Color
                 obj.weaponText.Position = Vector2.new(pos2d.X, boxY + boxH + Config.Distance.Gap + 12)
                 obj.weaponText.Visible = true
             else
@@ -699,7 +462,7 @@ local function renderStep()
         else
             obj.weaponText.Visible = false
         end
-
+        
         -- Cooking indicator
         if Config.CookingIndicator and cache[p] and cache[p].hasCooking then
             obj.cookingText.Text = "🍳 MASAK"
@@ -711,25 +474,23 @@ local function renderStep()
         else
             obj.cookingText.Visible = false
         end
-
+        
         -- Skeleton
         if Config.Skeleton.Enabled then
-            updateSkeleton(ch, obj, cam)
+            updateSkeleton(ch, obj)
         else
             for _, l in ipairs(obj.skeleton) do l.Visible = false end
-            for i = 1, 14 do obj.skeletonLastPos[i] = nil end
         end
+        
+        ::continue::
     end
 end
 
--- Public API
 function LightESP:Load(customConfig)
     self:Unload()
     if customConfig then
         for k, v in pairs(customConfig) do Config[k] = v end
     end
-    EnsureRootInstances()
-    CurrentRunId = HttpService:GenerateGUID(false)
     renderConn = RunService.RenderStepped:Connect(renderStep)
     if Config.Keybind.Enabled then
         UserInputService.InputBegan:Connect(function(input, gpe)
@@ -748,12 +509,7 @@ function LightESP:Unload()
     cache = {}
     for p, _ in pairs(connections) do disconnectPlayer(p) end
     connections = {}
-    if ChamsContainer then pcall(function() ChamsContainer:Destroy() end); ChamsContainer = nil end
-    if MeshChamsFolder then pcall(function() MeshChamsFolder:Destroy() end); MeshChamsFolder = nil end
-    CleanupMeshChams(workspace)
-    for _, player in ipairs(Players:GetPlayers()) do
-        CleanupCharacterMeshChams(player.Character)
-    end
+    if ChamsContainer then ChamsContainer:Destroy(); ChamsContainer = nil end
 end
 
 function LightESP:GetConfig()
@@ -762,6 +518,10 @@ end
 
 function LightESP:UpdateConfig(new)
     for k, v in pairs(new) do Config[k] = v end
+    for p, obj in pairs(espObjs) do
+        if obj.weaponText then obj.weaponText.Color = Config.Weapon.Color end
+        for _, l in ipairs(obj.skeleton) do l.Thickness = Config.Skeleton.Thickness; l.Color = Config.Skeleton.Color end
+    end
 end
 
 function LightESP:SetEnabled(enabled)
