@@ -60,7 +60,7 @@ local Library do
     Library = {
         Theme =  { },
 
-        MenuKeybind = tostring(Enum.KeyCode.RightShift),
+        MenuKeybind = tostring(Enum.KeyCode.Z),
         Flags = { },
 
         FadeSpeed = 0.3,
@@ -72,9 +72,9 @@ local Library do
         },
 
         Folders = {
-            Directory = "midnighthub",
-            Configs = "midnighthub/Configs",
-            Assets = "midnighthub/Assets",
+            Directory = "kagihub",
+            Configs = "kagihub/Configs",
+            Assets = "kagihub/Assets",
         },
 
         Images = {
@@ -121,7 +121,7 @@ local Library do
             ["Inline"] = FromRGB(26, 24, 31),
             ["Text"] = FromRGB(255, 255, 255),
             ["Element"] = FromRGB(40, 38, 49),
-            ["Accent"] = FromRGB(0, 255, 255),
+            ["Accent"] = FromRGB(251, 159, 255),
             ["Image"] = FromRGB(255, 255, 255),
             ["Gradient"] = FromRGB(211, 211, 211)
         }
@@ -2010,7 +2010,7 @@ local Library do
                 Instances:Create("UIGradient", {
                     Parent = Items["HueInline"].Instance,
                     Name = "\0",
-                    Color = RGBSequence{RGBSequenceKeypoint(0, FromRGB(255, 0, 0)), RGBSequenceKeypoint(0.17, FromRGB(255, 255, 0)), RGBSequenceKeypoint(0.33, FromRGB(0, 255, 255)), RGBSequenceKeypoint(0.5, FromRGB(0, 255, 255)), RGBSequenceKeypoint(0.67, FromRGB(0, 0, 255)), RGBSequenceKeypoint(0.83, FromRGB(255, 0, 255)), RGBSequenceKeypoint(1, FromRGB(255, 0, 0))},
+                    Color = RGBSequence{RGBSequenceKeypoint(0, FromRGB(255, 0, 0)), RGBSequenceKeypoint(0.17, FromRGB(255, 255, 0)), RGBSequenceKeypoint(0.33, FromRGB(0, 255, 0)), RGBSequenceKeypoint(0.5, FromRGB(0, 255, 255)), RGBSequenceKeypoint(0.67, FromRGB(0, 0, 255)), RGBSequenceKeypoint(0.83, FromRGB(255, 0, 255)), RGBSequenceKeypoint(1, FromRGB(255, 0, 0))},
                     Rotation = 180
                 })
 
@@ -3814,7 +3814,7 @@ local Library do
                     Visible = false,
                     ClipsDescendants = true,
                                         ZIndex = 1,
-                    Size = UDim2New(0, 575, 0, 345),
+                    Size = UDim2New(0, 833, 0, 562),
                     BorderSizePixel = 0,
                     BackgroundColor3 = FromRGB(15, 14, 18)
                 })  Items["MainFrame"]:AddToTheme({BackgroundColor3 = "Background"})
