@@ -1142,35 +1142,7 @@ local Library = { } do
                 return Pill
             end
 
-            WItems.TitlePill = MakePill(1)
-
-            WItems.Icon = Library:Create("ImageLabel", {
-                Parent = WItems.TitlePill.Instance,
-                Name = "\0",
-                ImageColor3 = Library.Theme.Accent,
-                BackgroundTransparency = 1,
-                Size = UDim2.new(0, 27, 0, 20),
-                LayoutOrder = 1,
-                BorderSizePixel = 0
-            }):AddToTheme({ ImageColor3 = "Accent" })
-            ApplyIcon(WItems.Icon.Instance, Icon)
-
-            WItems.Title = Library:Create("TextLabel", {
-                Parent = WItems.TitlePill.Instance,
-                Name = "\0",
-                FontFace = Library.Font,
-                TextColor3 = Library.Theme.Text,
-                Text = Title,
-                TextSize = 15,
-                BackgroundTransparency = 1,
-                Size = UDim2.new(0, 0, 1, 0),
-                AutomaticSize = Enum.AutomaticSize.X,
-                TextXAlignment = Enum.TextXAlignment.Left,
-                LayoutOrder = 2,
-                BorderSizePixel = 0
-            }):AddToTheme({ TextColor3 = "Text" })
-
-            WItems.FpsPill = MakePill(2)
+            WItems.FpsPill = MakePill(1)
             WItems.Fps = Library:Create("TextLabel", {
                 Parent = WItems.FpsPill.Instance,
                 Name = "\0",
@@ -1185,7 +1157,7 @@ local Library = { } do
                 BorderSizePixel = 0
             }):AddToTheme({ TextColor3 = "Text" })
 
-            WItems.PingPill = MakePill(3)
+            WItems.PingPill = MakePill(2)
             WItems.Ping = Library:Create("TextLabel", {
                 Parent = WItems.PingPill.Instance,
                 Name = "\0",
