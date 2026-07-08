@@ -1,3 +1,6 @@
+
+oj
+
 if getgenv().Arcane and getgenv().Arcane.Unload then
     getgenv().Arcane:Unload()
 end
@@ -1071,6 +1074,72 @@ local Library = { } do
             if Items.MobileText then
                 Items.MobileText.Instance.Text = Bool and "Close" or "Open"
             end
+        end
+
+        if IsMobile then
+            local MobileButton = Library:Create("ImageButton", {
+                Parent = Library.Holder.Instance,
+                Name = "\0",
+                Position = UDim2.new(0.05, 0, 0.25, 0),
+                Size = UDim2.new(0, 50, 0, 50),
+                BackgroundColor3 = Library.Theme.Background,
+                BorderSizePixel = 0,
+                Image = "rbxassetid://84089530335014",
+                ZIndex = 10,
+                Active = true
+            }):AddToTheme({ BackgroundColor3 = "Background" })
+
+            Library:Create("UICorner", {
+                Parent = MobileButton.Instance,
+                CornerRadius = UDim.new(0, 12)
+            })
+
+            Library:Create("UIStroke", {
+                Parent = MobileButton.Instance,
+                Color = Library.Theme.Border,
+                Thickness = 1.5
+            }):AddToTheme({ Color = "Border" })
+
+            local dragging = false
+            local dragInput, dragStart, startPos
+
+            Library:Connect(MobileButton.Instance.InputBegan, function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    dragging = true
+                    dragStart = input.Position
+                    startPos = MobileButton.Instance.Position
+
+                    local conn
+                    conn = input.Changed:Connect(function()
+                        if input.UserInputState == Enum.UserInputState.End then
+                            dragging = false
+                            conn:Disconnect()
+                        end
+                    end)
+                end
+            end)
+
+            Library:Connect(UserInputService.InputChanged, function(input)
+                if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+                    dragInput = input
+                end
+            end)
+
+            Library:Connect(RunService.Heartbeat, function()
+                if dragging and dragInput then
+                    local delta = dragInput.Position - dragStart
+                    MobileButton.Instance.Position = UDim2.new(
+                        startPos.X.Scale,
+                        startPos.X.Offset + delta.X,
+                        startPos.Y.Scale,
+                        startPos.Y.Offset + delta.Y
+                    )
+                end
+            end)
+
+            MobileButton:Connect("MouseButton1Click", function()
+                Window:SetOpen(not Window.IsOpen)
+            end)
         end
 
         function Window:Center()
