@@ -1,5 +1,5 @@
+kontol kuda
 
-oj
 
 if getgenv().Arcane and getgenv().Arcane.Unload then
     getgenv().Arcane:Unload()
@@ -521,11 +521,14 @@ local Library = { } do
             return Font.new(getcustomasset(Name .. ".font"))
         end
 
-        local Success, Result = pcall(function()
-            return CustomFont:New("ArcaneInter", 600, "Normal", {
-                Url = "https://github.com/sametexe001/luas/raw/refs/heads/main/fonts/InterSemibold.ttf"
-            })
-        end)
+        local Success, Result
+        if not IsMobile and not UserInputService.TouchEnabled and type(getcustomasset) == "function" then
+            Success, Result = pcall(function()
+                return CustomFont:New("ArcaneInter", 600, "Normal", {
+                    Url = "https://github.com/sametexe001/luas/raw/refs/heads/main/fonts/InterSemibold.ttf"
+                })
+            end)
+        end
 
         Library.Font = Success and Result or Font.new("rbxasset://fonts/families/GothamSSm.json", Enum.FontWeight.SemiBold)
     end
